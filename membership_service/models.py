@@ -43,7 +43,7 @@ class Membership(models.Model):
         related_name="memberships",
     )
     plan = models.ForeignKey(
-        "plans.MembershipPlan",
+        "plan_service.MembershipPlan",
         on_delete=models.PROTECT,
         related_name="memberships",
     )

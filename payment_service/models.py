@@ -29,7 +29,7 @@ class Payment(models.Model):
     )
     payment_type = models.CharField(max_length=20, choices=Type.choices)
     membership = models.ForeignKey(
-        "membership.Membership",
+        "membership_service.Membership",
         on_delete=models.CASCADE,
         related_name="payments",
     )
