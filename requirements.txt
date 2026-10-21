@@ -1,0 +1,11 @@
+Django
+flake8
+flake8-quotes
+flake8-variables-names
+pep8-naming
+django-debug-toolbar
+djangorestframework
+djangorestframework-simplejwt
+drf-spectacular
+celery==5.3.6
+redis==5.0.1
