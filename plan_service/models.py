@@ -3,6 +3,15 @@ from django.db import models
 
 
 class MembershipPlan(models.Model):
+    """Membership plan offered by the fitness club.
+
+    Attributes:
+        name (str): Human-readable plan name.
+        code (str): Unique slug identifying the plan.
+        duration_days (int): Plan validity period in days.
+        price (Decimal): Plan price in USD.
+        tier (str): Plan tier (BASIC, STANDARD or PREMIUM).
+    """
     class Tier(models.TextChoices):
         BASIC = "BASIC", "Basic"
         STANDARD = "STANDARD", "Standard"

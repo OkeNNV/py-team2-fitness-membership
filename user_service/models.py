@@ -27,12 +27,36 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_user(self, email: str, password=None, **extra_fields) -> User:
+    def create_user(self, email: str, password: str | None = None, **extra_fields) -> User:
+        """Create a regular user without staff or superuser permissions.
+
+        Args:
+            email (str): User email.
+            password (str | None): Raw password.
+            **extra_fields: Additional User model fields.
+
+        Returns:
+            User: The created user.
+        """
         extra_fields.setdefault("is_staff", False)
         extra_fields.setdefault("is_superuser", False)
         return self._create_user(email, password, **extra_fields)
 
-    def create_superuser(self, email: str, password=None, **extra_fields) -> User:
+    def create_superuser(self, email: str, password: str, **extra_fields) -> User:
+        """Create a superuser with staff and superuser permissions.
+
+        Args:
+            email (str): User email.
+            password (str | None): Raw password.
+            **extra_fields: Additional User model fields.
+
+        Returns:
+            User: The created superuser.
+
+        Raises:
+            ValueError: If is_staff or is_superuser is explicitly set to False.
+        """
+
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         if not extra_fields["is_staff"] or not extra_fields["is_superuser"]:
