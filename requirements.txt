@@ -2,6 +2,7 @@ Django
 flake8
 flake8-quotes
 flake8-variables-names
+flake8-docstrings
 pep8-naming
 django-debug-toolbar
 djangorestframework
@@ -10,3 +11,8 @@ drf-spectacular
 celery==5.3.6
 redis==5.0.1
 django-filter
+pytest
+pytest-django
+psycopg2-binary
+python-dotenv
+requests
