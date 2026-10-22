@@ -49,9 +49,7 @@ class Membership(models.Model):
     )
     start_date = models.DateField()
     end_date = models.DateField()
-    status = models.CharField(
-        max_length=10, choices=Status.choices, default=Status.ACTIVE
-    )
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
     auto_renew = models.BooleanField(default=False)
     price_at_purchase = models.DecimalField(
         max_digits=8, decimal_places=2, validators=[MinValueValidator(0)]

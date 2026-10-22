@@ -28,9 +28,7 @@ class Migration(migrations.Migration):
                 (
                     "duration_days",
                     models.PositiveIntegerField(
-                        validators=[
-                            django.core.validators.MinValueValidator(1)
-                        ]
+                        validators=[django.core.validators.MinValueValidator(1)]
                     ),
                 ),
                 (
@@ -38,9 +36,7 @@ class Migration(migrations.Migration):
                     models.DecimalField(
                         decimal_places=2,
                         max_digits=8,
-                        validators=[
-                            django.core.validators.MinValueValidator(0)
-                        ],
+                        validators=[django.core.validators.MinValueValidator(0)],
                     ),
                 ),
                 (

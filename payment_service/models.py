@@ -24,9 +24,7 @@ class Payment(models.Model):
         MEMBERSHIP_PURCHASE = "MEMBERSHIP_PURCHASE", "Membership purchase"
         UPGRADE_FEE = "UPGRADE_FEE", "Upgrade fee"
 
-    status = models.CharField(
-        max_length=10, choices=Status.choices, default=Status.PENDING
-    )
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     payment_type = models.CharField(max_length=20, choices=Type.choices)
     membership = models.ForeignKey(
         "membership_service.Membership",
