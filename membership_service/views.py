@@ -74,13 +74,13 @@ class MembershipViewSet(viewsets.ModelViewSet):
         end_date = today + timedelta(days=plan.duration_days)
 
         serializer.save(
-            member = self.request.user,
-            plan = plan,
-            start_date = today,
-            end_date = end_date,
-            status = Membership.Status.ACTIVE,
-            auto_renew = auto_renew,
-            price_at_purchase = plan.price,
+            member=self.request.user,
+            plan=plan,
+            start_date=today,
+            end_date=end_date,
+            status=Membership.Status.FROZEN,
+            auto_renew=auto_renew,
+            price_at_purchase=plan.price,
         )
 
     @extend_schema(
