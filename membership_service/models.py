@@ -19,7 +19,6 @@ class Membership(models.Model):
         frozen_from (date | None): Start date of the freeze, null if never frozen.
         frozen_to (date | None): End date of the freeze, null if never frozen.
     """
-
     @property
     def was_frozen(self) -> bool:
         """Return True if the membership has already been frozen."""
