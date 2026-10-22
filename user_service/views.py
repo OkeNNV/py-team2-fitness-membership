@@ -1,13 +1,13 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 
-from user_service.serializers import UserSerializer
+from user_service.serializers import UserSerializer, UserCreateSerializer
 
 
 class CreateUserView(generics.CreateAPIView):
     """View for creating a new user (registration)."""
 
-    serializer_class = UserSerializer
+    serializer_class = UserCreateSerializer
     permission_classes = ()
 
 
