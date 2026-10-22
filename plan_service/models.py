@@ -21,9 +21,7 @@ class MembershipPlan(models.Model):
     name = models.CharField(max_length=100)
     code = models.SlugField(max_length=50, unique=True)
     duration_days = models.PositiveIntegerField(validators=[MinValueValidator(1)])
-    price = models.DecimalField(
-        max_digits=8, decimal_places=2, validators=[MinValueValidator(0)]
-    )
+    price = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)])
     tier = models.CharField(max_length=10, choices=Tier.choices)
 
     class Meta:
