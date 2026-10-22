@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from django.utils.translation import gettext as _
+from django.contrib.auth.password_validation import validate_password
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -18,6 +19,11 @@ class UserSerializer(serializers.ModelSerializer):
                 "label": _("Password"),
             }
         }
+
+    def validate_password(self, value):
+        """Validate password against Django's password validators."""
+        validate_password(value)
+        return value
 
     def create(self, validated_data):
         """Create user with encrypted password."""
