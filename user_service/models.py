@@ -57,7 +57,6 @@ class UserManager(BaseUserManager):
         Raises:
             ValueError: If is_staff or is_superuser is explicitly set to False.
         """
-
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         if not extra_fields["is_staff"] or not extra_fields["is_superuser"]:
