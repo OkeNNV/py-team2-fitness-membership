@@ -1,3 +1,4 @@
+import stripe
 from stripe import StripeClient
 
 from config import settings
@@ -66,3 +67,40 @@ def create_checkout_session(membership: Membership) -> Payment:
     Raises:
         stripe.StripeError: If Stripe fails to create the Checkout Session.
     """
+
+    client = StripeClient(settings.STRIPE_SECRET_KEY)
+
+    product_id = membership.plan.code
+    if membership.auto_renew:
+        prices = client.v1.prices.list(
+            {
+                "product": product_id,
+                "active": True,
+                "type": "recurring",
+            }
+        )
+        mode = "subscription"
+    else:
+        prices = client.v1.prices.list(
+                {
+                    "product": product_id,
+                    "active": True,
+                    "type": "one_time",
+                }
+            )
+        mode = "payment"
+
+    if not prices.data:
+        raise ValueError("There is no such price")
+    if len(prices.data) != 1:
+        raise ValueError("There's more than one price option")
+
+    price_id = prices.data[0].id
+
+    session = client.v1.checkout.sessions.create({
+        "success_url": "http://localhost:8000/payments/success/",
+        "cancel_url": "http://localhost:8000/payments/cancel/",
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "mode": mode,
+        "metadata": {"membership_id": str(membership.id)},
+    })
