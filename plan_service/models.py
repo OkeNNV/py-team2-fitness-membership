@@ -12,6 +12,7 @@ class MembershipPlan(models.Model):
         price (Decimal): Plan price in USD.
         tier (str): Plan tier (BASIC, STANDARD or PREMIUM).
     """
+
     class Tier(models.TextChoices):
         BASIC = "BASIC", "Basic"
         STANDARD = "STANDARD", "Standard"
@@ -19,7 +20,9 @@ class MembershipPlan(models.Model):
 
     name = models.CharField(max_length=100)
     code = models.SlugField(max_length=50, unique=True)
-    duration_days = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    duration_days = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)]
+    )
     price = models.DecimalField(
         max_digits=8, decimal_places=2, validators=[MinValueValidator(0)]
     )

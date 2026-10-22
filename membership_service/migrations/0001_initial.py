@@ -8,24 +8,51 @@ class Migration(migrations.Migration):
 
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='Membership',
+            name="Membership",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('start_date', models.DateField()),
-                ('end_date', models.DateField()),
-                ('status', models.CharField(choices=[('ACTIVE', 'Active'), ('EXPIRED', 'Expired'), ('FROZEN', 'Frozen')], default='ACTIVE', max_length=10)),
-                ('auto_renew', models.BooleanField(default=False)),
-                ('price_at_purchase', models.DecimalField(decimal_places=2, max_digits=8, validators=[django.core.validators.MinValueValidator(0)])),
-                ('frozen_from', models.DateField(blank=True, null=True)),
-                ('frozen_to', models.DateField(blank=True, null=True)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("start_date", models.DateField()),
+                ("end_date", models.DateField()),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("ACTIVE", "Active"),
+                            ("EXPIRED", "Expired"),
+                            ("FROZEN", "Frozen"),
+                        ],
+                        default="ACTIVE",
+                        max_length=10,
+                    ),
+                ),
+                ("auto_renew", models.BooleanField(default=False)),
+                (
+                    "price_at_purchase",
+                    models.DecimalField(
+                        decimal_places=2,
+                        max_digits=8,
+                        validators=[
+                            django.core.validators.MinValueValidator(0)
+                        ],
+                    ),
+                ),
+                ("frozen_from", models.DateField(blank=True, null=True)),
+                ("frozen_to", models.DateField(blank=True, null=True)),
             ],
             options={
-                'ordering': ['-start_date'],
+                "ordering": ["-start_date"],
             },
         ),
     ]
