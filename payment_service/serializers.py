@@ -4,6 +4,12 @@ from payment_service.models import Payment
 
 
 class PaymentSerializer(serializers.ModelSerializer):
+    """Serialize payment details for API responses.
+
+    All fields are read-only because payments are created and updated
+    by the payment workflow rather than directly through the API.
+    """
+
     class Meta:
         model = Payment
         fields = (

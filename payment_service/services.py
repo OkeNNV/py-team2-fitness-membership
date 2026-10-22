@@ -23,7 +23,6 @@ def create_stripe_product(plan: MembershipPlan) -> str:
         stripe.StripeError: If Stripe fails to create the product or
             either of its prices.
     """
-
     client = StripeClient(settings.STRIPE_SECRET_KEY)
     product = client.v1.products.create(
         {
@@ -53,8 +52,9 @@ def create_stripe_product(plan: MembershipPlan) -> str:
 
 def create_checkout_session(membership: Membership) -> Payment:
     """Create a Stripe Checkout Session for a membership purchase.
+
     Creates a pending Payment associated with the given membership,
-    initializes a one-time Stripe Checkout Session, and stores the
+    initializes Stripe Checkout Session, and stores the
     resulting session ID and payment URL in the Payment.
 
     Args:
@@ -65,8 +65,9 @@ def create_checkout_session(membership: Membership) -> Payment:
 
     Raises:
         stripe.StripeError: If Stripe fails to create the Checkout Session.
+        ValueError: If the required price is missing or the number of matching
+            prices is unexpected.
     """
-
     client = StripeClient(settings.STRIPE_SECRET_KEY)
 
     product_id = membership.plan.code
@@ -81,21 +82,19 @@ def create_checkout_session(membership: Membership) -> Payment:
         mode = "subscription"
     else:
         prices = client.v1.prices.list(
-                {
-                    "product": product_id,
-                    "active": True,
-                    "type": "one_time",
-                }
-            )
+            {
+                "product": product_id,
+                "active": True,
+                "type": "one_time",
+            }
+        )
         mode = "payment"
 
     if not prices.data:
         raise ValueError("There is no such price")
     if len(prices.data) != 1:
         raise ValueError("There's more than one price option")
-
     price_id = prices.data[0].id
-
     session = client.v1.checkout.sessions.create({
         "success_url": "http://localhost:8000/payments/success/",
         "cancel_url": "http://localhost:8000/payments/cancel/",
@@ -103,3 +102,12 @@ def create_checkout_session(membership: Membership) -> Payment:
         "mode": mode,
         "metadata": {"membership_id": str(membership.id)},
     })
+
+    payment = Payment.objects.create(
+        membership=membership,
+        payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
+        money_to_pay=membership.price_at_purchase,
+        session_id=session.id,
+        session_url=session.url,
+    )
+    return payment
