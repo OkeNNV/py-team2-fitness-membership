@@ -4,6 +4,7 @@ from django.db import models
 
 class UserManager(BaseUserManager):
     """Manager for the User model that uses email as the unique identifier."""
+
     use_in_migrations = True
 
     def _create_user(self, email: str, password: str, **extra_fields) -> User:
@@ -56,7 +57,6 @@ class UserManager(BaseUserManager):
         Raises:
             ValueError: If is_staff or is_superuser is explicitly set to False.
         """
-
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         if not extra_fields["is_staff"] or not extra_fields["is_superuser"]:
@@ -74,6 +74,7 @@ class User(AbstractUser):
         password (str): Hashed password (inherited).
         is_staff (bool): Whether the user is a club staff member (inherited).
     """
+
     username = None
     email = models.EmailField(unique=True)
 
