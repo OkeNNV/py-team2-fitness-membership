@@ -1,7 +1,7 @@
 name: ci.yml
 on:
   push:
-    branches: [ "main", "development" ]
+    branches: [ "main", "development", "OkeNNV_Artem/*" ]
   pull_request:
     branches: [ "main", "development" ]
 jobs:
