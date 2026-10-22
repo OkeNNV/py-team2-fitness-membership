@@ -1,4 +1,3 @@
-import stripe
 from stripe import StripeClient
 
 from config import settings
