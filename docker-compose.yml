@@ -8,6 +8,8 @@ services:
       - .env
     environment:
       MEDIA_ROOT: /vol/web/media
+      DB_HOST: db
+      DB_PORT: 5432
     volumes:
       - ./:/app
       - my_media:/vol/web/media
