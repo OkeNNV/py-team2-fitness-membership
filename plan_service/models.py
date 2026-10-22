@@ -12,6 +12,7 @@ class MembershipPlan(models.Model):
         price (Decimal): Plan price in USD.
         tier (str): Plan tier (BASIC, STANDARD or PREMIUM).
     """
+
     class Tier(models.TextChoices):
         BASIC = "BASIC", "Basic"
         STANDARD = "STANDARD", "Standard"
