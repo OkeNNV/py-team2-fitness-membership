@@ -47,6 +47,7 @@ def create_stripe_product(plan: MembershipPlan) -> str:
         "product": product_id,
         "nickname": "recurring-price",
     })
+
     return product_id
 
 
@@ -70,44 +71,48 @@ def create_checkout_session(membership: Membership) -> Payment:
     """
     client = StripeClient(settings.STRIPE_SECRET_KEY)
 
-    product_id = membership.plan.code
-    if membership.auto_renew:
-        prices = client.v1.prices.list(
-            {
-                "product": product_id,
-                "active": True,
-                "type": "recurring",
-            }
-        )
-        mode = "subscription"
-    else:
-        prices = client.v1.prices.list(
-            {
-                "product": product_id,
-                "active": True,
-                "type": "one_time",
-            }
-        )
-        mode = "payment"
+    stripe_product_id = membership.plan.code
+    price_type = "recurring" if membership.auto_renew else "one_time"
+    checkout_mode = "subscription" if membership.auto_renew else "payment"
+
+    prices = client.v1.prices.list(
+        {
+            "product": stripe_product_id,
+            "active": True,
+            "type": price_type,
+        }
+    )
 
     if not prices.data:
-        raise ValueError("There is no such price")
-    if len(prices.data) != 1:
-        raise ValueError("There's more than one price option")
-    price_id = prices.data[0].id
-    session = client.v1.checkout.sessions.create({
-        "success_url": "http://localhost:8000/payments/success/",
-        "cancel_url": "http://localhost:8000/payments/cancel/",
-        "line_items": [{"price": price_id, "quantity": 1}],
-        "mode": mode,
-        "metadata": {"membership_id": str(membership.id)},
-    })
+        raise ValueError(
+            f"No active {price_type} price found "
+            f"for Stripe product {stripe_product_id}"
+        )
 
-    payment = Payment.objects.create(
+    if len(prices.data) > 1:
+        raise ValueError(
+            f"Multiple active {price_type} prices found "
+            f"for Stripe product {stripe_product_id}"
+        )
+
+    price_id = prices.data[0].id
+
+    session = client.v1.checkout.sessions.create(
+        {
+            "success_url": "http://localhost:8000/payments/success/",
+            "cancel_url": "http://localhost:8000/payments/cancel/",
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "mode": checkout_mode,
+            "metadata": {
+                "membership_id": str(membership.id),
+            },
+        }
+    )
+
+    return Payment.objects.create(
         membership=membership,
         payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
         money_to_pay=membership.price_at_purchase,
         session_id=session.id,
         session_url=session.url,
     )
-    return payment
