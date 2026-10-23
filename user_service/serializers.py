@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.utils.translation import gettext as _
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -105,3 +106,33 @@ class UserCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create user with encrypted password."""
         return get_user_model().objects.create_user(**validated_data)
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """Custom serializer for obtaining a pair of JWT access and refresh tokens.
+
+    Customizes the output of access token format to include the 'Token' prefix.
+    """
+
+    def validate(self, attrs):
+        """Validate credentials and return formatted access and refresh tokens."""
+        data = super().validate(attrs)
+        return {
+            "access token": f"Token {data.get('access')}",
+            "refresh token": data.get("refresh"),
+        }
+
+
+class CustomTokenRefreshSerializer(TokenRefreshSerializer):
+    """Custom serializer for refreshing the JWT access token.
+
+    Customizes the output format to include the 'Token' prefix for the new access token.
+    """
+
+    def validate(self, attrs):
+        """Validate refresh token and return formatted new access and refresh tokens."""
+        data = super().validate(attrs)
+        return {
+            "access token": f"Token {data.get('access')}",
+            "refresh token": data.get("refresh", attrs.get("refresh")),
+        }
