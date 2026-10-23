@@ -15,9 +15,6 @@ from datetime import timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
-
-load_dotenv()
-
 # Build paths inside the project like this: BASE_DIR / "subdir".
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -26,8 +23,7 @@ load_dotenv(BASE_DIR / ".env")
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get(
-    "SECRET_KEY",
-    "django-insecure-5unhv)6i+x10t!ue_6)8h$ig73f7d@pe#ei6xdlfliv6pxqch="
+    "SECRET_KEY", "django-insecure-5unhv)6i+x10t!ue_6)8h$ig73f7d@pe#ei6xdlfliv6pxqch="
 )
 
 # SECURITY WARNING: don't run with debug turned on in production!
