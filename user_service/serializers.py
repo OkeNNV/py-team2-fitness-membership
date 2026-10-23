@@ -111,7 +111,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         return {
-            "access token": f"Token {data.get('access')}"
+            "access token": f"Token {data.get('access')}",
+            "refresh token": data.get('refresh'),
         }
 
 
@@ -119,5 +120,6 @@ class CustomTokenRefreshSerializer(TokenRefreshSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         return {
-            "access token": f"Token {data.get('access')}"
+            "access token:": f"Token {data.get('access')}",
+            "refresh": data.get('refresh', attrs.get('refresh')),
         }
