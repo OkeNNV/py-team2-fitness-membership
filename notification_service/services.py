@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 def _enqueue(
-        event: NotificationEvent,
-        object_id: int,
-        context: dict | None = None,
+    event: NotificationEvent,
+    object_id: int,
+    context: dict | None = None,
 ) -> None:
     """Queue a notification task once the current transaction is committed.
 
