@@ -11,16 +11,20 @@ logger = logging.getLogger(__name__)
 
 
 def send_telegram_message(message: str) -> bool:
-    """Send a plain-text message to the staff Telegram chat.
+    """Send an HTML-formatted message to the staff Telegram chat.
 
-    The bot token and chat id are read from settings (TELEGRAM_BOT_TOKEN and
-    TELEGRAM_CHAT_ID). Messages longer than MESSAGE_MAX_LENGTH are truncated
-    with a trailing "...". This function never raises: every failure is
-    logged and reported through the return value, and the bot token is
-    never written to the logs.
+    The message is sent with parse_mode=HTML, so it must already be valid
+    Telegram HTML with all user-provided values escaped (the builders in
+    notification_service.messages do this). The bot token and chat id are
+    read from settings (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID). Messages
+    longer than MESSAGE_MAX_LENGTH are truncated with a trailing "...", which
+    may cut an HTML tag and make Telegram reject the message. This function
+    never raises: every failure is logged and reported through the return
+    value, and the bot token is never written to the logs.
 
     Args:
-        message (str): Text to send.
+        message (str): HTML-formatted text to send, with user-provided
+            values already escaped.
 
     Returns:
         bool: True if Telegram accepted the message, False otherwise
@@ -52,6 +56,7 @@ def send_telegram_message(message: str) -> bool:
     request_body = {
         "chat_id": chat_id,
         "text": message,
+        "parse_mode": "HTML",
     }
 
     try:
