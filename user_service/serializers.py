@@ -134,5 +134,5 @@ class CustomTokenRefreshSerializer(TokenRefreshSerializer):
         data = super().validate(attrs)
         return {
             "access token": f"Token {data.get('access')}",
-            "refresh": data.get("refresh", attrs.get("refresh")),
+            "refresh token": data.get("refresh", attrs.get("refresh")),
         }
