@@ -1,3 +1,4 @@
+from django.db import transaction
 from stripe import StripeClient
 
 from config import settings
@@ -51,8 +52,9 @@ def create_stripe_product(plan: MembershipPlan) -> str:
     return product_id
 
 
+@transaction.atomic
 def create_checkout_session(membership: Membership) -> Payment:
-    """Create a Stripe Checkout Session for a membership purchase.
+    """Create or reuse a Checkout Session for a membership purchase.
 
     Creates a pending Payment associated with the given membership,
     initializes Stripe Checkout Session, and stores the
@@ -62,14 +64,40 @@ def create_checkout_session(membership: Membership) -> Payment:
         membership: Membership for which the payment is being created.
 
     Returns:
-        The created Payment containing the Stripe session details.
+        A new or reusable pending Payment with Stripe session details.
 
     Raises:
-        stripe.StripeError: If Stripe fails to create the Checkout Session.
-        ValueError: If the required price is missing or the number of matching
-            prices is unexpected.
+        stripe.StripeError: If a Stripe operation fails.
+        ValueError: If the membership is already paid or its Stripe price
+            configuration is invalid.
     """
+    membership = Membership.objects.select_for_update().get(
+        pk=membership.pk
+    )
     client = StripeClient(settings.STRIPE_SECRET_KEY)
+
+    membership_payments = Payment.objects.filter(
+        membership=membership,
+        payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
+    )
+    if membership_payments.filter(status=Payment.Status.PAID).exists():
+        raise ValueError("Membership has already been paid")
+
+    pending_payment = (
+        membership_payments
+        .filter(status=Payment.Status.PENDING)
+        .order_by("-created_at")
+        .first()
+    )
+    if pending_payment:
+        existing_session = client.v1.checkout.sessions.retrieve(
+            pending_payment.session_id
+        )
+        if existing_session.status in {"open", "complete"}:
+            return pending_payment
+        if existing_session.status == "expired":
+            pending_payment.status = Payment.Status.EXPIRED
+            pending_payment.save(update_fields=["status"])
 
     stripe_product_id = membership.plan.code
     price_type = "recurring" if membership.auto_renew else "one_time"
@@ -116,3 +144,24 @@ def create_checkout_session(membership: Membership) -> Payment:
         session_id=session.id,
         session_url=session.url,
     )
+
+
+@transaction.atomic
+def mark_payment_as_paid(session_id: str) -> Payment:
+    """Mark a pending payment as paid using its Stripe session ID."""
+    payment = Payment.objects.select_for_update().get(
+        session_id=session_id
+    )
+
+    if payment.status == Payment.Status.PAID:
+        return payment
+
+    if payment.status != Payment.Status.PENDING:
+        raise ValueError(
+            f"Payment cannot be completed from status {payment.status}"
+        )
+
+    payment.status = Payment.Status.PAID
+    payment.save(update_fields=["status"])
+
+    return payment
