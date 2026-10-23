@@ -8,11 +8,14 @@ django-debug-toolbar
 djangorestframework
 djangorestframework-simplejwt
 drf-spectacular
-celery==5.3.6
-redis==5.0.1
+celery>=5.6
+redis>=6
 django-filter
 pytest
 pytest-django
 psycopg2-binary
 python-dotenv
 requests
+stripe
+aiogram
+celery-types

@@ -10,36 +10,68 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('membership_service', '0001_initial'),
-        ('plan_service', '0001_initial'),
+        ("membership_service", "0001_initial"),
+        ("plan_service", "0001_initial"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='membership',
-            name='member',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='memberships', to=settings.AUTH_USER_MODEL),
+            model_name="membership",
+            name="member",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="memberships",
+                to=settings.AUTH_USER_MODEL,
+            ),
         ),
         migrations.AddField(
-            model_name='membership',
-            name='plan',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='memberships', to='plan_service.membershipplan'),
+            model_name="membership",
+            name="plan",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.PROTECT,
+                related_name="memberships",
+                to="plan_service.membershipplan",
+            ),
         ),
         migrations.AddIndex(
-            model_name='membership',
-            index=models.Index(fields=['status', 'end_date'], name='membership__status_36fe62_idx'),
+            model_name="membership",
+            index=models.Index(
+                fields=["status", "end_date"],
+                name="membership__status_36fe62_idx",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='membership',
-            constraint=models.UniqueConstraint(condition=models.Q(('status__in', ['ACTIVE', 'FROZEN'])), fields=('member',), name='unique_active_or_frozen_membership_per_member'),
+            model_name="membership",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("status__in", ["ACTIVE", "FROZEN"])),
+                fields=("member",),
+                name="unique_active_or_frozen_membership_per_member",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='membership',
-            constraint=models.CheckConstraint(condition=models.Q(('end_date__gte', models.F('start_date'))), name='membership_end_date_gte_start_date'),
+            model_name="membership",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("end_date__gte", models.F("start_date"))),
+                name="membership_end_date_gte_start_date",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='membership',
-            constraint=models.CheckConstraint(condition=models.Q(models.Q(('frozen_from__isnull', True), ('frozen_to__isnull', True)), models.Q(('frozen_from__isnull', False), ('frozen_to__gte', models.F('frozen_from')), ('frozen_to__isnull', False)), _connector='OR'), name='membership_frozen_range_valid'),
+            model_name="membership",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(
+                        ("frozen_from__isnull", True),
+                        ("frozen_to__isnull", True),
+                    ),
+                    models.Q(
+                        ("frozen_from__isnull", False),
+                        ("frozen_to__gte", models.F("frozen_from")),
+                        ("frozen_to__isnull", False),
+                    ),
+                    _connector="OR",
+                ),
+                name="membership_frozen_range_valid",
+            ),
         ),
     ]
