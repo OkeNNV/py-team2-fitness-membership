@@ -17,3 +17,6 @@ psycopg2-binary
 python-dotenv
 requests
 stripe==16.0.0
+stripe
+aiogram
+celery-types
