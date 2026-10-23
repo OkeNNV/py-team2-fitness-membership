@@ -29,4 +29,8 @@ urlpatterns = [
     path("api/users/", include("user_service.urls", namespace="user_service")),
     path("api/plans/", include("plan_service.urls")),
     path("api/memberships/", include("membership_service.urls")),
+    path(
+        "api/payments/",
+        include("payment_service.urls"),
+    ),
 ]
