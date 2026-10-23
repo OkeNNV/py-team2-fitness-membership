@@ -4,6 +4,7 @@ from datetime import datetime
 
 from celery import shared_task
 
+
 #### Test task for development ####
 @shared_task
 def print_hello():
