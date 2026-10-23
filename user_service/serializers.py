@@ -133,6 +133,6 @@ class CustomTokenRefreshSerializer(TokenRefreshSerializer):
         """Validate refresh token and return formatted new access and refresh tokens."""
         data = super().validate(attrs)
         return {
-            "access token:": f"Token {data.get('access')}",
+            "access token": f"Token {data.get('access')}",
             "refresh": data.get("refresh", attrs.get("refresh")),
         }
