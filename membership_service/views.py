@@ -1,20 +1,23 @@
 from datetime import date, timedelta
+
+from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import viewsets, permissions, status, filters
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiResponse,
+    extend_schema,
+)
+from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from drf_spectacular.utils import (
-    extend_schema,
-    OpenApiParameter,
-    OpenApiResponse
-)
 
 from membership_service.models import Membership
 from membership_service.serializers import (
-    MembershipSerializer,
     MembershipCreateSerializer,
     MembershipFreezeSerializer,
+    MembershipSerializer,
 )
+from payment_service.services import PaymentService
 from plan_service.models import MembershipPlan
 
 
@@ -40,9 +43,9 @@ class MembershipViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Retrieve memberships based on user role and apply date range filters."""
         user = self.request.user
-        qs = Membership.objects.select_related("member", "plan")
-
-        # .prefetch_related("payments")
+        qs = Membership.objects.select_related(
+            "member", "plan"
+        ).prefetch_related("payments")
 
         date_from = self.request.query_params.get("from")
         date_to = self.request.query_params.get("to")
@@ -83,15 +86,19 @@ class MembershipViewSet(viewsets.ModelViewSet):
         today = date.today()
         end_date = today + timedelta(days=plan.duration_days)
 
-        serializer.save(
-            member=self.request.user,
-            plan=plan,
-            start_date=today,
-            end_date=end_date,
-            status=Membership.Status.FROZEN,
-            auto_renew=auto_renew,
-            price_at_purchase=plan.price,
-        )
+        with transaction.atomic():
+            membership = serializer.save(
+                member=self.request.user,
+                plan=plan,
+                start_date=today,
+                end_date=end_date,
+                status=Membership.Status.FROZEN,
+                auto_renew=auto_renew,
+                price_at_purchase=plan.price,
+            )
+
+            payment_service = PaymentService()
+            payment_service.create_checkout_session(membership)
 
     @extend_schema(
         summary="List or filter memberships",
@@ -210,7 +217,9 @@ class MembershipViewSet(viewsets.ModelViewSet):
         membership.status = Membership.Status.FROZEN
         membership.frozen_from = frozen_from
         membership.frozen_to = frozen_to
-        membership.end_date = membership.end_date + timedelta(days=freeze_days)
+        membership.end_date = membership.end_date + timedelta(
+            days=freeze_days
+        )
         membership.save()
 
         return Response(
@@ -245,7 +254,10 @@ class MembershipViewSet(viewsets.ModelViewSet):
         membership.status = Membership.Status.ACTIVE
         membership.save()
 
-        return Response(MembershipSerializer(membership).data, status=status.HTTP_200_OK)
+        return Response(
+            MembershipSerializer(membership).data,
+            status=status.HTTP_200_OK,
+        )
 
     @extend_schema(
         summary="Upgrade membership plan",
@@ -298,8 +310,13 @@ class MembershipViewSet(viewsets.ModelViewSet):
         today = date.today()
         remaining_days = max(0, (membership.end_date - today).days)
 
-        credit = (membership.plan.price / membership.plan.duration_days) * remaining_days
-        new_full_price = (new_plan.price / new_plan.duration_days) * remaining_days
+        current_daily_rate = (
+            membership.plan.price / membership.plan.duration_days
+        )
+        new_daily_rate = new_plan.price / new_plan.duration_days
+
+        credit = current_daily_rate * remaining_days
+        new_full_price = new_daily_rate * remaining_days
         upgrade_fee = max(0, new_full_price - credit)
 
         membership.plan = new_plan
