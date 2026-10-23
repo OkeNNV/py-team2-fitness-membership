@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
 from stripe import StripeClient
@@ -183,6 +183,106 @@ class PaymentService:
             membership=membership,
             payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
             money_to_pay=membership.price_at_purchase,
+            session_id=session.id,
+            session_url=session.url,
+        )
+
+    @transaction.atomic
+    def create_upgrade_checkout_session(
+        self,
+        membership: Membership,
+        new_plan: MembershipPlan,
+        upgrade_fee: Decimal,
+    ) -> Payment:
+        """Create or reuse a Stripe Checkout Session for an upgrade fee."""
+        membership = (
+            Membership.objects
+            .select_for_update()
+            .select_related("plan")
+            .get(pk=membership.pk)
+        )
+
+        if new_plan.price <= membership.plan.price:
+            raise ValueError(
+                "Upgrade is only allowed to a more expensive plan"
+            )
+
+        upgrade_fee = upgrade_fee.quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP,
+        )
+
+        if upgrade_fee <= 0:
+            raise ValueError(
+                "Upgrade fee must be greater than zero"
+            )
+
+        pending_payment = (
+            Payment.objects
+            .select_for_update()
+            .filter(
+                membership=membership,
+                payment_type=Payment.Type.UPGRADE_FEE,
+                status=Payment.Status.PENDING,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+        if pending_payment:
+            existing_session = (
+                self.stripe_client.v1.checkout.sessions.retrieve(
+                    pending_payment.session_id
+                )
+            )
+
+            existing_target_plan_id = (
+                existing_session.metadata.get("target_plan_id")
+            )
+
+            if existing_session.status in {"open", "complete"}:
+                if existing_target_plan_id != str(new_plan.id):
+                    raise ValueError(
+                        "Another upgrade payment is already pending"
+                    )
+
+                return pending_payment
+
+            if existing_session.status == "expired":
+                pending_payment.status = Payment.Status.EXPIRED
+                pending_payment.save(update_fields=["status"])
+
+        stripe_product_id = new_plan.code
+
+        metadata = {
+            "membership_id": str(membership.id),
+            "target_plan_id": str(new_plan.id),
+            "payment_type": Payment.Type.UPGRADE_FEE,
+        }
+
+        session = self.stripe_client.v1.checkout.sessions.create(
+            {
+                "success_url": "http://localhost:8000/payments/success/",
+                "cancel_url": "http://localhost:8000/payments/cancel/",
+                "mode": "payment",
+                "line_items": [
+                    {
+                        "price_data": {
+                            "currency": "usd",
+                            "product": stripe_product_id,
+                            "unit_amount": int(upgrade_fee * 100),
+                        },
+                        "quantity": 1,
+                    }
+                ],
+                "metadata": metadata,
+            }
+        )
+
+        return Payment.objects.create(
+            membership=membership,
+            payment_type=Payment.Type.UPGRADE_FEE,
+            money_to_pay=upgrade_fee,
             session_id=session.id,
             session_url=session.url,
         )
