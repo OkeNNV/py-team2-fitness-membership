@@ -304,7 +304,6 @@ class PaymentService:
         payment = (
             Payment.objects
             .select_for_update()
-            .select_related("target_plan")
             .get(session_id=session_id)
         )
 
