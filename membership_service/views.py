@@ -5,6 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import (
     OpenApiParameter,
     OpenApiResponse,
+    inline_serializer,
     extend_schema,
 )
 from rest_framework import filters, permissions, status, viewsets
@@ -18,6 +19,7 @@ from membership_service.serializers import (
     MembershipSerializer,
 )
 from payment_service.services import PaymentService
+from payment_service.serializers import PaymentSerializer
 from plan_service.models import MembershipPlan
 
 
@@ -66,39 +68,58 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary="Purchase a new membership",
-        description="Creates a new membership for the authenticated user",
+        description=(
+            "Creates a membership and returns its Stripe Checkout payment session."
+        ),
+        request=MembershipCreateSerializer,
         responses={
-            201: MembershipSerializer,
+            201: inline_serializer(
+                name="MembershipPurchaseResponse",
+                fields={
+                    "membership": MembershipSerializer(read_only=True),
+                    "payment": PaymentSerializer(read_only=True),
+                },
+            ),
             400: OpenApiResponse(
                 description=(
-                    "Validation error or user already "
+                    "Validation error, invalid plan, or the user already "
                     "has an active/frozen membership."
                 )
-            )
-        }
+            ),
+        },
     )
-    def perform_create(self, serializer):
-        """Handle membership creation, setting initial status to frozen."""
-        plan_id = serializer.validated_data.get("plan_id")
-        auto_renew = serializer.validated_data.get("auto_renew", False)
-        plan = MembershipPlan.objects.get(id=plan_id)
+    def create(self, request, *args, **kwargs):
+        """Create a membership and return its Stripe payment session."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
+        plan = serializer.validated_data["plan"]
         today = date.today()
         end_date = today + timedelta(days=plan.duration_days)
 
         with transaction.atomic():
             membership = serializer.save(
-                member=self.request.user,
-                plan=plan,
+                member=request.user,
                 start_date=today,
                 end_date=end_date,
                 status=Membership.Status.FROZEN,
-                auto_renew=auto_renew,
                 price_at_purchase=plan.price,
             )
 
-            payment_service = PaymentService()
-            payment_service.create_checkout_session(membership)
+            payment = PaymentService().create_checkout_session(membership)
+
+        response_data = {
+            "membership": MembershipSerializer(
+                membership,
+                context=self.get_serializer_context(),
+            ).data,
+            "payment": PaymentSerializer(payment).data,
+        }
+
+        return Response(
+            response_data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @extend_schema(
         summary="List or filter memberships",
