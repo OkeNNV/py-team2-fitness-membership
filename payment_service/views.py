@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.utils.decorators import method_decorator
@@ -6,6 +8,9 @@ from django.views.decorators.csrf import csrf_exempt
 from stripe import SignatureVerificationError
 
 from payment_service.services import PaymentService
+
+
+logger = logging.getLogger(__name__)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -28,6 +33,7 @@ class StripeWebhookView(View):
             return HttpResponse(status=400)
 
         if not settings.STRIPE_WEBHOOK_SECRET:
+            logger.error("STRIPE_WEBHOOK_SECRET is not configured")
             return HttpResponse(status=500)
 
         payment_service = PaymentService()
@@ -38,17 +44,14 @@ class StripeWebhookView(View):
                 signature,
             )
         except (ValueError, SignatureVerificationError):
+            logger.warning("Invalid Stripe webhook signature")
             return HttpResponse(status=400)
 
         if event.type == "checkout.session.completed":
             session = event.data.object
 
             if session.payment_status == "paid":
-                payment_service.mark_payment_as_paid(session.id)
-
-        elif event.type == "checkout.session.async_payment_succeeded":
-            session = event.data.object
-            payment_service.mark_payment_as_paid(session.id)
+                payment_service.mark_payment_as_paid_and_membership_as_active(session.id)
 
         elif event.type == "checkout.session.expired":
             session = event.data.object

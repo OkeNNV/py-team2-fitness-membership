@@ -26,6 +26,13 @@ class Payment(models.Model):
 
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     payment_type = models.CharField(max_length=20, choices=Type.choices)
+    target_plan = models.ForeignKey(
+        "plan_service.MembershipPlan",
+        on_delete=models.PROTECT,
+        related_name="upgrade_payments",
+        null=True,
+        blank=True,
+    )
     membership = models.ForeignKey(
         "membership_service.Membership",
         on_delete=models.CASCADE,
