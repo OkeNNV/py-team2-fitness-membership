@@ -126,7 +126,7 @@ class PaymentService:
                 pending_payment.status = Payment.Status.EXPIRED
                 pending_payment.save(update_fields=["status"])
 
-        stripe_product_id = membership.plan.code
+        stripe_product_id = membership.plan.stripe_product_id
         price_type = "recurring" if membership.auto_renew else "one_time"
         checkout_mode = "subscription" if membership.auto_renew else "payment"
 
@@ -252,7 +252,7 @@ class PaymentService:
                 pending_payment.status = Payment.Status.EXPIRED
                 pending_payment.save(update_fields=["status"])
 
-        stripe_product_id = new_plan.code
+        stripe_product_id = new_plan.stripe_product_id
 
         metadata = {
             "membership_id": str(membership.id),

@@ -1,4 +1,7 @@
+from django.db import transaction
 from rest_framework import viewsets
+
+from payment_service.services import PaymentService
 from plan_service.models import MembershipPlan
 from plan_service.permissions import IsAdminOrReadOnly
 from plan_service.serializers import MembershipPlanSerializer
@@ -20,3 +23,11 @@ class MembershipPlanViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(tier__iexact=tier_param)
 
         return queryset
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        """Create a membership plan and synchronize it with Stripe."""
+        plan = serializer.save()
+
+        plan.stripe_product_id = PaymentService().create_stripe_product(plan)
+        plan.save(update_fields=["stripe_product_id"])
