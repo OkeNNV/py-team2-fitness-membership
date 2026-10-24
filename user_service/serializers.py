@@ -92,7 +92,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
             "last_name",
             "password",
         )
-        read_only_fields = ("id", "is_staff")
+        read_only_fields = ("id",)
         extra_kwargs = {
             "password": {"min_length": 5},
         }
