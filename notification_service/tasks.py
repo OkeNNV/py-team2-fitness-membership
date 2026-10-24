@@ -5,10 +5,6 @@ import random
 
 from celery import shared_task
 
-from django.utils import timezone
-
-logger = logging.getLogger(__name__)
-
 from membership_service.models import Membership
 from notification_service.exceptions import (
     PermanentTelegramError,
@@ -17,7 +13,6 @@ from notification_service.exceptions import (
 from notification_service.messages import NotificationEvent, build_message
 from notification_service.telegram_client import send_telegram_message_or_raise
 from payment_service.models import Payment
-
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 5
@@ -104,7 +99,7 @@ def send_notification(self, event: str, object_id: int, context: dict | None = N
         if exc.retry_after is not None:
             delay = exc.retry_after + 1
         else:
-            delay = min(RETRY_BASE_DELAY * 2**attempt, RETRY_MAX_DELAY)
+            delay = min(RETRY_BASE_DELAY * 2 ** attempt, RETRY_MAX_DELAY)
             delay += random.uniform(0, RETRY_JITTER)
 
         logger.warning(

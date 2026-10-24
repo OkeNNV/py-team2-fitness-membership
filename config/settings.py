@@ -178,4 +178,8 @@ CELERY_BEAT_SCHEDULE = {
         "task": "membership_service.tasks.mark_expired_memberships",
         "schedule": crontab(hour=8, minute=0),
     },
+    "send-expiration-reminders-daily": {
+        "task": "membership_service.tasks.send_expiration_reminders",
+        "schedule": crontab(hour=8, minute=0),
+    },
 }
