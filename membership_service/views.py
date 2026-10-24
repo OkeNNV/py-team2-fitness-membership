@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 
+import django_filters
 from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import (
@@ -34,13 +35,27 @@ class IsOwnerOrStaff(permissions.BasePermission):
         return obj.member == request.user
 
 
+class MembershipFilter(django_filters.FilterSet):
+    """Custom filter set to support member_id filtering for staff."""
+
+    member_id = django_filters.NumberFilter(field_name="member__id")
+    status = django_filters.CharFilter(field_name="status")
+    auto_renew = django_filters.BooleanFilter(field_name="auto_renew")
+
+    class Meta:
+        """Meta options for MembershipFilter."""
+
+        model = Membership
+        fields = ["status", "auto_renew", "member_id"]
+
+
 @extend_schema(tags=["Memberships"])
 class MembershipViewSet(viewsets.ModelViewSet):
     """ViewSet for managing membership lifecycles (purchase, freeze, resume, upgrade, list)."""
 
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrStaff]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["status", "auto_renew", "member"]
+    filterset_class = MembershipFilter
     ordering_fields = ["start_date", "end_date"]
 
     def get_queryset(self):
@@ -182,9 +197,24 @@ class MembershipViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Freeze a membership",
         description=(
-                "Freezes an active membership within its validity window."
+                "Freezes an active membership within its validity window. "
+                "Accepts from and to via query parameters or body."
         ),
         request=MembershipFreezeSerializer,
+        parameters=[
+            OpenApiParameter(
+                name="from",
+                description="Freeze start date (YYYY-MM-DD)",
+                required=False,
+                type=str
+            ),
+            OpenApiParameter(
+                name="to",
+                description="Freeze end date (YYYY-MM-DD)",
+                required=False,
+                type=str
+            ),
+        ],
         responses={
             200: MembershipSerializer,
             400: OpenApiResponse(
@@ -217,7 +247,12 @@ class MembershipViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        serializer = MembershipFreezeSerializer(data=request.data)
+        frozen_from = request.query_params.get("from") or request.data.get("frozen_from")
+        frozen_to = request.query_params.get("to") or request.data.get("frozen_to")
+
+        serializer = MembershipFreezeSerializer(
+            data={"frozen_from": frozen_from, "frozen_to": frozen_to}
+        )
         serializer.is_valid(raise_exception=True)
 
         frozen_from = serializer.validated_data["frozen_from"]
@@ -288,6 +323,9 @@ class MembershipViewSet(viewsets.ModelViewSet):
             "the membership to a more expensive plan."
         ),
         request=MembershipUpgradeSerializer,
+        parameters=[
+            OpenApiParameter(name="plan_id", description="New plan ID", required=False, type=int),
+        ],
         responses={
             201: PaymentSerializer,
             400: OpenApiResponse(
@@ -303,7 +341,9 @@ class MembershipViewSet(viewsets.ModelViewSet):
         """Process plan upgrade for an existing membership."""
         membership = self.get_object()
 
-        serializer = MembershipUpgradeSerializer(data=request.data)
+        plan_id = request.query_params.get("plan_id") or request.data.get("plan_id")
+
+        serializer = MembershipUpgradeSerializer(data={"plan_id": plan_id})
         serializer.is_valid(raise_exception=True)
 
         new_plan = serializer.validated_data["new_plan"]
