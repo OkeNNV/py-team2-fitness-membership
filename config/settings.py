@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 import os
 from datetime import timedelta
 from pathlib import Path
+
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / "subdir".
@@ -155,8 +157,7 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
     "ROTATE_REFRESH_TOKENS": True,
-    "AUTH_HEADER_NAME": "HTTP_AUTHORIZE",
-    "AUTH_HEADER_TYPES": ("Token",),
+    "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
@@ -167,9 +168,18 @@ TELEGRAM_TIMEOUT = float(os.getenv("TELEGRAM_TIMEOUT", "10"))
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
-CELERY_TIMEZONE = TIME_ZONE
+CELERY_TIMEZONE = os.getenv("TIMEZONE", "Europe/Kyiv")
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 
-CELERY_BEAT_SCHEDULE = {}
+CELERY_BEAT_SCHEDULE = {
+    "mark-expired-memberships-daily": {
+        "task": "membership_service.tasks.mark_expired_memberships",
+        "schedule": crontab(hour=8, minute=0),
+    },
+    "send-expiration-reminders-daily": {
+        "task": "membership_service.tasks.send_expiration_reminders",
+        "schedule": crontab(hour=8, minute=0),
+    },
+}
