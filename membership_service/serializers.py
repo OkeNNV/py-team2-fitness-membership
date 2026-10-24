@@ -3,15 +3,11 @@ from rest_framework import serializers
 
 from plan_service.models import MembershipPlan
 from .models import Membership
-# from plan_service.serializers import MembershipPlanSerializer
-# from payment_service.serializers import PaymentSerializer
 
 
 class MembershipSerializer(serializers.ModelSerializer):
     """Serializer for reading membership details."""
 
-    # plan_detail = MembershipPlanSerializer(source="plan", read_only=True)
-    # payments = PaymentSerializer(many=True, read_only=True)
     was_frozen = serializers.BooleanField(read_only=True)
     frozen_days = serializers.IntegerField(read_only=True)
 
@@ -23,7 +19,6 @@ class MembershipSerializer(serializers.ModelSerializer):
             "id",
             "member",
             "plan",
-            # "plan_detail",
             "start_date",
             "end_date",
             "status",
@@ -33,7 +28,6 @@ class MembershipSerializer(serializers.ModelSerializer):
             "frozen_to",
             "was_frozen",
             "frozen_days",
-            # "payments",
         ]
         read_only_fields = [
             "id",
@@ -45,6 +39,8 @@ class MembershipSerializer(serializers.ModelSerializer):
             "price_at_purchase",
             "frozen_from",
             "frozen_to",
+            "was_frozen",
+            "frozen_days",
         ]
 
 
