@@ -200,6 +200,20 @@ class MembershipViewSet(
             "Accepts frozen_from and frozen_to in request body."
         ),
         request=MembershipFreezeSerializer,
+        parameters=[
+            OpenApiParameter(
+                name="from",
+                description="Freeze start date (YYYY-MM-DD)",
+                required=False,
+                type=str
+            ),
+            OpenApiParameter(
+                name="to",
+                description="Freeze end date (YYYY-MM-DD)",
+                required=False,
+                type=str
+            ),
+        ],
         responses={
             200: MembershipSerializer,
             400: OpenApiResponse(
@@ -232,7 +246,12 @@ class MembershipViewSet(
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = MembershipFreezeSerializer(data=request.data)
+        frozen_from = request.query_params.get("from") or request.data.get("frozen_from")
+        frozen_to = request.query_params.get("to") or request.data.get("frozen_to")
+
+        serializer = MembershipFreezeSerializer(
+            data={"frozen_from": frozen_from, "frozen_to": frozen_to}
+        )
         serializer.is_valid(raise_exception=True)
 
         frozen_from = serializer.validated_data["frozen_from"]
@@ -310,6 +329,9 @@ class MembershipViewSet(
             "the membership to a more expensive plan."
         ),
         request=MembershipUpgradeSerializer,
+        parameters=[
+            OpenApiParameter(name="plan_id", description="New plan ID", required=False, type=int),
+        ],
         responses={
             201: PaymentSerializer,
             400: OpenApiResponse(
@@ -325,7 +347,9 @@ class MembershipViewSet(
         """Process plan upgrade for an existing membership."""
         membership = self.get_object()
 
-        serializer = MembershipUpgradeSerializer(data=request.data)
+        plan_id = request.query_params.get("plan_id") or request.data.get("plan_id")
+
+        serializer = MembershipUpgradeSerializer(data={"plan_id": plan_id})
         serializer.is_valid(raise_exception=True)
 
         new_plan = serializer.validated_data["new_plan"]
