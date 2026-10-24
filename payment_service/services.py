@@ -281,6 +281,7 @@ class PaymentService:
 
         return Payment.objects.create(
             membership=membership,
+            target_plan=new_plan,
             payment_type=Payment.Type.UPGRADE_FEE,
             money_to_pay=upgrade_fee,
             session_id=session.id,
@@ -289,12 +290,12 @@ class PaymentService:
 
     @transaction.atomic
     def mark_payment_as_paid_and_membership_as_active(self, session_id: str) -> Payment:
-        """Mark a pending payment as paid using its Stripe session ID.
-
-        Additionally, mark its Membership as ACTIVE.
-        """
-        payment = Payment.objects.select_for_update().get(
-            session_id=session_id
+        """Mark a payment as paid and apply its membership changes."""
+        payment = (
+            Payment.objects
+            .select_for_update()
+            .select_related("target_plan")
+            .get(session_id=session_id)
         )
 
         if payment.status == Payment.Status.PAID:
@@ -309,10 +310,27 @@ class PaymentService:
             pk=payment.membership_id,
         )
 
+        if payment.payment_type == Payment.Type.MEMBERSHIP_PURCHASE:
+
+            membership.status = Membership.Status.ACTIVE
+            membership.save(update_fields=["status"])
+
+        elif payment.payment_type == Payment.Type.UPGRADE_FEE:
+            if payment.target_plan is None:
+                raise ValueError(
+                    "Upgrade payment does not have a target plan"
+                )
+
+            membership.plan = payment.target_plan
+            membership.save(update_fields=["plan"])
+
+        else:
+            raise ValueError(
+                f"Unsupported payment type: {payment.payment_type}"
+            )
+
         payment.status = Payment.Status.PAID
-        membership.status = Membership.Status.ACTIVE
         payment.save(update_fields=["status"])
-        membership.save(update_fields=["status"])
 
         return payment
 

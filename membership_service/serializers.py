@@ -92,3 +92,12 @@ class MembershipFreezeSerializer(serializers.Serializer):
             raise serializers.ValidationError("Maximum freeze window cannot exceed 30 days.")
 
         return attrs
+
+
+class MembershipUpgradeSerializer(serializers.Serializer):
+    """Validate a membership plan upgrade request."""
+
+    plan_id = serializers.PrimaryKeyRelatedField(
+        queryset=MembershipPlan.objects.all(),
+        source="new_plan",
+    )
