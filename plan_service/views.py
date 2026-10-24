@@ -1,3 +1,4 @@
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from plan_service.models import MembershipPlan
 from plan_service.permissions import IsAdminOrReadOnly
@@ -10,6 +11,9 @@ class MembershipPlanViewSet(viewsets.ModelViewSet):
     queryset = MembershipPlan.objects.all()
     serializer_class = MembershipPlanSerializer
     permission_classes = [IsAdminOrReadOnly]
+
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["tier"]
 
     def get_queryset(self):
         """Optionally filter membership plans by tier via query parameter."""
