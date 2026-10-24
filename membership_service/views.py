@@ -5,6 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import (
     OpenApiParameter,
     OpenApiResponse,
+    inline_serializer,
     extend_schema,
 )
 from rest_framework import filters, permissions, status, viewsets
@@ -16,9 +17,11 @@ from membership_service.serializers import (
     MembershipCreateSerializer,
     MembershipFreezeSerializer,
     MembershipSerializer,
+    MembershipUpgradeSerializer,
 )
+from payment_service.models import Payment
 from payment_service.services import PaymentService
-from plan_service.models import MembershipPlan
+from payment_service.serializers import PaymentSerializer
 
 
 class IsOwnerOrStaff(permissions.BasePermission):
@@ -66,39 +69,58 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary="Purchase a new membership",
-        description="Creates a new membership for the authenticated user",
+        description=(
+            "Creates a membership and returns its Stripe Checkout payment session."
+        ),
+        request=MembershipCreateSerializer,
         responses={
-            201: MembershipSerializer,
+            201: inline_serializer(
+                name="MembershipPurchaseResponse",
+                fields={
+                    "membership": MembershipSerializer(read_only=True),
+                    "payment": PaymentSerializer(read_only=True),
+                },
+            ),
             400: OpenApiResponse(
                 description=(
-                    "Validation error or user already "
+                    "Validation error, invalid plan, or the user already "
                     "has an active/frozen membership."
                 )
-            )
-        }
+            ),
+        },
     )
-    def perform_create(self, serializer):
-        """Handle membership creation, setting initial status to frozen."""
-        plan_id = serializer.validated_data.get("plan_id")
-        auto_renew = serializer.validated_data.get("auto_renew", False)
-        plan = MembershipPlan.objects.get(id=plan_id)
+    def create(self, request, *args, **kwargs):
+        """Create a membership and return its Stripe payment session."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
+        plan = serializer.validated_data["plan"]
         today = date.today()
         end_date = today + timedelta(days=plan.duration_days)
 
         with transaction.atomic():
             membership = serializer.save(
-                member=self.request.user,
-                plan=plan,
+                member=request.user,
                 start_date=today,
                 end_date=end_date,
                 status=Membership.Status.FROZEN,
-                auto_renew=auto_renew,
                 price_at_purchase=plan.price,
             )
 
-            payment_service = PaymentService()
-            payment_service.create_checkout_session(membership)
+            payment = PaymentService().create_checkout_session(membership)
+
+        response_data = {
+            "membership": MembershipSerializer(
+                membership,
+                context=self.get_serializer_context(),
+            ).data,
+            "payment": PaymentSerializer(payment).data,
+        }
+
+        return Response(
+            response_data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @extend_schema(
         summary="List or filter memberships",
@@ -260,42 +282,31 @@ class MembershipViewSet(viewsets.ModelViewSet):
         )
 
     @extend_schema(
-        summary="Upgrade membership plan",
+        summary="Create a membership upgrade payment",
         description=(
-                "Upgrades an existing membership to a new plan with a "
-                "higher price/tier."
+            "Creates a Stripe Checkout session for upgrading "
+            "the membership to a more expensive plan."
         ),
+        request=MembershipUpgradeSerializer,
         responses={
-            200: OpenApiResponse(
+            201: PaymentSerializer,
+            400: OpenApiResponse(
                 description=(
-                    "Upgrade successful, returns fee details and updated "
-                    "membership."
+                    "Invalid target plan, unpaid membership, "
+                    "or no payable upgrade period."
                 )
             ),
-            400: OpenApiResponse(
-                description="New plan must have a higher price/tier."
-            )
-        }
+        },
     )
     @action(detail=True, methods=["post"])
     def upgrade(self, request, pk=None):
         """Process plan upgrade for an existing membership."""
         membership = self.get_object()
-        new_plan_id = request.data.get("plan_id")
 
-        if not new_plan_id:
-            return Response(
-                {"error": "New plan_id is required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        serializer = MembershipUpgradeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        try:
-            new_plan = MembershipPlan.objects.get(id=new_plan_id)
-        except MembershipPlan.DoesNotExist:
-            return Response(
-                {"error": "Plan not found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        new_plan = serializer.validated_data["new_plan"]
 
         if new_plan.price <= membership.plan.price:
             return Response(
@@ -304,26 +315,55 @@ class MembershipViewSet(viewsets.ModelViewSet):
                         "Upgrade is only allowed to a plan with a higher price."
                     )
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        has_paid_purchase = membership.payments.filter(
+            payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
+            status=Payment.Status.PAID,
+        ).exists()
+
+        if not has_paid_purchase:
+            return Response(
+                {
+                    "error": (
+                        "The initial membership payment must be completed "
+                        "before upgrading."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         today = date.today()
-        remaining_days = max(0, (membership.end_date - today).days)
+        remaining_days = max(
+            0,
+            (membership.end_date - today).days,
+        )
 
         current_daily_rate = (
             membership.plan.price / membership.plan.duration_days
         )
-        new_daily_rate = new_plan.price / new_plan.duration_days
+        new_daily_rate = (
+            new_plan.price / new_plan.duration_days
+        )
 
-        credit = current_daily_rate * remaining_days
-        new_full_price = new_daily_rate * remaining_days
-        upgrade_fee = max(0, new_full_price - credit)
+        upgrade_fee = (
+            new_daily_rate - current_daily_rate
+        ) * remaining_days
 
-        membership.plan = new_plan
-        membership.save()
+        if upgrade_fee <= 0:
+            return Response(
+                {"error": "There is no payable upgrade period remaining."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        return Response({
-            "message": "Membership successfully upgraded.",
-            "upgrade_fee": round(upgrade_fee, 2),
-            "membership": MembershipSerializer(membership).data
-        }, status=status.HTTP_200_OK)
+        payment = PaymentService().create_upgrade_checkout_session(
+            membership=membership,
+            new_plan=new_plan,
+            upgrade_fee=upgrade_fee,
+        )
+
+        return Response(
+            PaymentSerializer(payment).data,
+            status=status.HTTP_201_CREATED,
+        )
