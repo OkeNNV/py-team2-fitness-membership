@@ -17,6 +17,16 @@ class PaymentService:
         if self.stripe_client is None:
             self.stripe_client = StripeClient(settings.STRIPE_SECRET_KEY)
 
+    @staticmethod
+    def _get_stripe_product_id(plan: MembershipPlan) -> str:
+        """Return the plan's Stripe product ID or raise an error."""
+        if not plan.stripe_product_id:
+            raise ValueError(
+                f"Membership plan {plan.id} is not synchronized with Stripe"
+            )
+
+        return plan.stripe_product_id
+
     def construct_webhook_event(
         self,
         payload: bytes,
@@ -126,7 +136,7 @@ class PaymentService:
                 pending_payment.status = Payment.Status.EXPIRED
                 pending_payment.save(update_fields=["status"])
 
-        stripe_product_id = membership.plan.stripe_product_id
+        stripe_product_id = self._get_stripe_product_id(membership.plan)
         price_type = "recurring" if membership.auto_renew else "one_time"
         checkout_mode = "subscription" if membership.auto_renew else "payment"
 
@@ -252,7 +262,7 @@ class PaymentService:
                 pending_payment.status = Payment.Status.EXPIRED
                 pending_payment.save(update_fields=["status"])
 
-        stripe_product_id = new_plan.stripe_product_id
+        stripe_product_id = self._get_stripe_product_id(new_plan)
 
         metadata = {
             "membership_id": str(membership.id),
