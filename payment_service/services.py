@@ -288,8 +288,11 @@ class PaymentService:
         )
 
     @transaction.atomic
-    def mark_payment_as_paid(self, session_id: str) -> Payment:
-        """Mark a pending payment as paid using its Stripe session ID."""
+    def mark_payment_as_paid_and_membership_as_active(self, session_id: str) -> Payment:
+        """Mark a pending payment as paid using its Stripe session ID.
+
+        Additionally, mark its Membership as ACTIVE.
+        """
         payment = Payment.objects.select_for_update().get(
             session_id=session_id
         )
@@ -302,8 +305,14 @@ class PaymentService:
                 f"Payment cannot be completed from status {payment.status}"
             )
 
+        membership = Membership.objects.select_for_update().get(
+            pk=payment.membership_id,
+        )
+
         payment.status = Payment.Status.PAID
+        membership.status = Membership.Status.ACTIVE
         payment.save(update_fields=["status"])
+        membership.save(update_fields=["status"])
 
         return payment
 
