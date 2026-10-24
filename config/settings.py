@@ -172,9 +172,4 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 
-CELERY_BEAT_SCHEDULE = {
-    "print-hello-every-10-seconds": {
-        "task": "notification_service.tasks.print_hello",
-        "schedule": 10.0,
-    },
-}
+CELERY_BEAT_SCHEDULE = {}
