@@ -1,4 +1,4 @@
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
@@ -20,6 +20,12 @@ class MembershipPlan(models.Model):
 
     name = models.CharField(max_length=100)
     code = models.SlugField(max_length=50, unique=True)
+    stripe_product_id = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True,
+    )
     duration_days = models.PositiveIntegerField(
         validators=[MinValueValidator(1), MaxValueValidator(730)]
     )

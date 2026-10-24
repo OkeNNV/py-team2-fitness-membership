@@ -32,7 +32,9 @@ class MembershipPlanSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "code",
+            "stripe_product_id",
             "duration_days",
             "price",
             "tier",
         ]
+        read_only_fields = ["id", "stripe_product_id"]

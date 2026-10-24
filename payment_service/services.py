@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
 from stripe import StripeClient
@@ -16,6 +16,16 @@ class PaymentService:
         self.stripe_client = stripe_client
         if self.stripe_client is None:
             self.stripe_client = StripeClient(settings.STRIPE_SECRET_KEY)
+
+    @staticmethod
+    def _get_stripe_product_id(plan: MembershipPlan) -> str:
+        """Return the plan's Stripe product ID or raise an error."""
+        if not plan.stripe_product_id:
+            raise ValueError(
+                f"Membership plan {plan.id} is not synchronized with Stripe"
+            )
+
+        return plan.stripe_product_id
 
     def construct_webhook_event(
         self,
@@ -126,7 +136,7 @@ class PaymentService:
                 pending_payment.status = Payment.Status.EXPIRED
                 pending_payment.save(update_fields=["status"])
 
-        stripe_product_id = membership.plan.code
+        stripe_product_id = self._get_stripe_product_id(membership.plan)
         price_type = "recurring" if membership.auto_renew else "one_time"
         checkout_mode = "subscription" if membership.auto_renew else "payment"
 
@@ -188,10 +198,113 @@ class PaymentService:
         )
 
     @transaction.atomic
-    def mark_payment_as_paid(self, session_id: str) -> Payment:
-        """Mark a pending payment as paid using its Stripe session ID."""
-        payment = Payment.objects.select_for_update().get(
-            session_id=session_id
+    def create_upgrade_checkout_session(
+        self,
+        membership: Membership,
+        new_plan: MembershipPlan,
+        upgrade_fee: Decimal,
+    ) -> Payment:
+        """Create or reuse a Stripe Checkout Session for an upgrade fee."""
+        membership = (
+            Membership.objects
+            .select_for_update()
+            .select_related("plan")
+            .get(pk=membership.pk)
+        )
+
+        if new_plan.price <= membership.plan.price:
+            raise ValueError(
+                "Upgrade is only allowed to a more expensive plan"
+            )
+
+        upgrade_fee = upgrade_fee.quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP,
+        )
+
+        if upgrade_fee <= 0:
+            raise ValueError(
+                "Upgrade fee must be greater than zero"
+            )
+
+        pending_payment = (
+            Payment.objects
+            .select_for_update()
+            .filter(
+                membership=membership,
+                payment_type=Payment.Type.UPGRADE_FEE,
+                status=Payment.Status.PENDING,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+        if pending_payment:
+            existing_session = (
+                self.stripe_client.v1.checkout.sessions.retrieve(
+                    pending_payment.session_id
+                )
+            )
+
+            existing_target_plan_id = (
+                existing_session.metadata.get("target_plan_id")
+            )
+
+            if existing_session.status in {"open", "complete"}:
+                if existing_target_plan_id != str(new_plan.id):
+                    raise ValueError(
+                        "Another upgrade payment is already pending"
+                    )
+
+                return pending_payment
+
+            if existing_session.status == "expired":
+                pending_payment.status = Payment.Status.EXPIRED
+                pending_payment.save(update_fields=["status"])
+
+        stripe_product_id = self._get_stripe_product_id(new_plan)
+
+        metadata = {
+            "membership_id": str(membership.id),
+            "target_plan_id": str(new_plan.id),
+            "payment_type": Payment.Type.UPGRADE_FEE,
+        }
+
+        session = self.stripe_client.v1.checkout.sessions.create(
+            {
+                "success_url": "http://localhost:8000/payments/success/",
+                "cancel_url": "http://localhost:8000/payments/cancel/",
+                "mode": "payment",
+                "line_items": [
+                    {
+                        "price_data": {
+                            "currency": "usd",
+                            "product": stripe_product_id,
+                            "unit_amount": int(upgrade_fee * 100),
+                        },
+                        "quantity": 1,
+                    }
+                ],
+                "metadata": metadata,
+            }
+        )
+
+        return Payment.objects.create(
+            membership=membership,
+            target_plan=new_plan,
+            payment_type=Payment.Type.UPGRADE_FEE,
+            money_to_pay=upgrade_fee,
+            session_id=session.id,
+            session_url=session.url,
+        )
+
+    @transaction.atomic
+    def mark_payment_as_paid_and_membership_as_active(self, session_id: str) -> Payment:
+        """Mark a payment as paid and apply its membership changes."""
+        payment = (
+            Payment.objects
+            .select_for_update()
+            .get(session_id=session_id)
         )
 
         if payment.status == Payment.Status.PAID:
@@ -200,6 +313,29 @@ class PaymentService:
         if payment.status != Payment.Status.PENDING:
             raise ValueError(
                 f"Payment cannot be completed from status {payment.status}"
+            )
+
+        membership = Membership.objects.select_for_update().get(
+            pk=payment.membership_id,
+        )
+
+        if payment.payment_type == Payment.Type.MEMBERSHIP_PURCHASE:
+
+            membership.status = Membership.Status.ACTIVE
+            membership.save(update_fields=["status"])
+
+        elif payment.payment_type == Payment.Type.UPGRADE_FEE:
+            if payment.target_plan is None:
+                raise ValueError(
+                    "Upgrade payment does not have a target plan"
+                )
+
+            membership.plan = payment.target_plan
+            membership.save(update_fields=["plan"])
+
+        else:
+            raise ValueError(
+                f"Unsupported payment type: {payment.payment_type}"
             )
 
         payment.status = Payment.Status.PAID

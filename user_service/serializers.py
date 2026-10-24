@@ -91,9 +91,8 @@ class UserCreateSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "password",
-            "is_staff",
         )
-        read_only_fields = ("id", "is_staff")
+        read_only_fields = ("id",)
         extra_kwargs = {
             "password": {"min_length": 5},
         }
@@ -106,33 +105,3 @@ class UserCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create user with encrypted password."""
         return get_user_model().objects.create_user(**validated_data)
-
-
-class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """Custom serializer for obtaining a pair of JWT access and refresh tokens.
-
-    Customizes the output of access token format to include the 'Token' prefix.
-    """
-
-    def validate(self, attrs):
-        """Validate credentials and return formatted access and refresh tokens."""
-        data = super().validate(attrs)
-        return {
-            "access token": f"Token {data.get('access')}",
-            "refresh token": data.get("refresh"),
-        }
-
-
-class CustomTokenRefreshSerializer(TokenRefreshSerializer):
-    """Custom serializer for refreshing the JWT access token.
-
-    Customizes the output format to include the 'Token' prefix for the new access token.
-    """
-
-    def validate(self, attrs):
-        """Validate refresh token and return formatted new access and refresh tokens."""
-        data = super().validate(attrs)
-        return {
-            "access token": f"Token {data.get('access')}",
-            "refresh token": data.get("refresh", attrs.get("refresh")),
-        }
