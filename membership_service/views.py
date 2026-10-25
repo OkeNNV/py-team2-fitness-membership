@@ -211,7 +211,6 @@ class MembershipViewSet(
             "Freezes an active membership within its validity window. "
             "Accepts frozen_from and frozen_to in request body."
         ),
-        request=MembershipFreezeSerializer,
         parameters=[
             OpenApiParameter(
                 name="from",
@@ -294,26 +293,27 @@ class MembershipViewSet(
         freeze_days = (frozen_to - frozen_from).days
         new_end_date = membership.end_date + timedelta(days=freeze_days)
 
-        try:
-            PaymentService().update_subscription_trial_end(
-                membership=membership,
-                new_billing_date=new_end_date,
-            )
-        except ValueError as error:
-            return Response(
-                {"error": str(error)},
-                status=status.HTTP_409_CONFLICT,
-            )
-        except StripeError:
-            return Response(
-                {
-                    "error": (
-                        "The Stripe billing date could not be updated. "
-                        "The membership was not frozen."
-                    )
-                },
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+        if membership.auto_renew:
+            try:
+                PaymentService().update_subscription_trial_end(
+                    membership=membership,
+                    new_billing_date=new_end_date,
+                )
+            except ValueError as error:
+                return Response(
+                    {"error": str(error)},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            except StripeError:
+                return Response(
+                    {
+                        "error": (
+                            "The Stripe billing date could not be updated. "
+                            "The membership was not frozen."
+                        )
+                    },
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
 
         membership.status = Membership.Status.FROZEN
         membership.frozen_from = frozen_from
@@ -327,6 +327,8 @@ class MembershipViewSet(
                 "end_date",
             ]
         )
+
+        notify_membership_frozen(membership)
 
         notify_membership_frozen(membership)
 
