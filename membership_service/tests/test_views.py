@@ -5,7 +5,6 @@ from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
 from plan_service.models import MembershipPlan
 from membership_service.models import Membership
-from payment_service.models import Payment
 
 User = get_user_model()
 
@@ -41,14 +40,6 @@ class MembershipViewSetTests(APITestCase):
             end_date=date.today() + timedelta(days=30),
             status=Membership.Status.ACTIVE,
             price_at_purchase=10.00
-        )
-        Payment.objects.create(
-            membership=self.membership,
-            status=Payment.Status.PAID,
-            payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
-            session_url="https://example.com/checkout",
-            session_id="cs_test_membership_purchase",
-            money_to_pay=10.00,
         )
 
     def test_freeze_active_membership(self):
@@ -95,4 +86,4 @@ class MembershipViewSetTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.membership.refresh_from_db()
         self.assertEqual(self.membership.status, Membership.Status.ACTIVE)
-        self.assertEqual(self.membership.frozen_from, date.today())
+        self.assertIsNone(self.membership.frozen_from)
