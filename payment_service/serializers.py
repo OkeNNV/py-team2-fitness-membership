@@ -17,6 +17,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             "status",
             "money_to_pay",
             "payment_type",
+            "target_plan",
             "session_url",
             "created_at",
         )
@@ -25,6 +26,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             "status",
             "money_to_pay",
             "payment_type",
+            "target_plan",
             "session_url",
             "created_at",
         )
