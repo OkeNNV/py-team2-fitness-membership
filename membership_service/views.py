@@ -209,7 +209,6 @@ class MembershipViewSet(
             "Freezes an active membership within its validity window. "
             "Accepts frozen_from and frozen_to in request body."
         ),
-        request=MembershipFreezeSerializer,
         parameters=[
             OpenApiParameter(
                 name="from",
