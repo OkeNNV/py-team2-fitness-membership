@@ -308,6 +308,17 @@ class MembershipViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        has_paid_purchase = membership.payments.filter(
+            payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
+            status=Payment.Status.PAID,
+        ).exists()
+
+        if not has_paid_purchase:
+            return Response(
+                {"error": "Membership payment has not been completed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         membership.status = Membership.Status.ACTIVE
         membership.save()
 

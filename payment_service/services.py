@@ -8,6 +8,7 @@ from config import settings
 from membership_service.models import Membership
 from payment_service.models import Payment
 from plan_service.models import MembershipPlan
+from notification_service.services import notify_payment_success, notify_membership_expired
 
 
 class PaymentService:
@@ -178,17 +179,24 @@ class PaymentService:
 
         price_id = price.id
 
-        session = self.stripe_client.v1.checkout.sessions.create(
-            {
-                "success_url": "http://localhost:8000/payments/success/",
-                "cancel_url": "http://localhost:8000/payments/cancel/",
-                "line_items": [{"price": price_id, "quantity": 1}],
-                "mode": checkout_mode,
+        session_data = {
+            "success_url": "http://localhost:8000/payments/success/",
+            "cancel_url": "http://localhost:8000/payments/cancel/",
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "mode": checkout_mode,
+            "metadata": {
+                "membership_id": str(membership.id),
+            },
+        }
+
+        if membership.auto_renew:
+            session_data["subscription_data"] = {
                 "metadata": {
                     "membership_id": str(membership.id),
-                },
+                }
             }
-        )
+
+        session = self.stripe_client.v1.checkout.sessions.create(session_data)
 
         return Payment.objects.create(
             membership=membership,
@@ -357,6 +365,8 @@ class PaymentService:
         payment.status = Payment.Status.PAID
         payment.save(update_fields=["status"])
 
+        notify_payment_success(payment)
+
         return payment
 
     @transaction.atomic
@@ -377,23 +387,59 @@ class PaymentService:
 
         return payment
 
-    @transaction.atomic
     def mark_membership_as_expired_after_failed_renewal(
             self,
             subscription_id: str,
     ) -> Membership:
-        """Expire a membership after a failed recurring payment."""
-        membership = (
-            Membership.objects
-            .select_for_update()
-            .get(stripe_subscription_id=subscription_id)
+        """Cancel the Stripe subscription after a failed renewal payment.
+
+        Marks the related membership as expired, disables automatic renewal,
+        and queues an expiration notification. If the membership is already
+        expired with auto-renew disabled, returns it without making another
+        Stripe request.
+
+        Args:
+            subscription_id: Stripe identifier of the subscription whose
+                renewal payment failed.
+
+        Returns:
+            The updated membership instance.
+
+        Raises:
+            Membership.DoesNotExist: If no membership is associated with the
+                provided subscription ID.
+            stripe.StripeError: If the Stripe subscription cannot be canceled.
+        """
+        membership = Membership.objects.get(
+            stripe_subscription_id=subscription_id
         )
 
-        if membership.status == Membership.Status.EXPIRED:
+        if (
+                membership.status == Membership.Status.EXPIRED
+                and not membership.auto_renew
+        ):
             return membership
 
-        membership.status = Membership.Status.EXPIRED
-        membership.save(update_fields=["status"])
+        self.stripe_client.v1.subscriptions.cancel(subscription_id)
+
+        with transaction.atomic():
+            membership = (
+                Membership.objects
+                .select_for_update()
+                .get(pk=membership.pk)
+            )
+
+            if (
+                    membership.status == Membership.Status.EXPIRED
+                    and not membership.auto_renew
+            ):
+                return membership
+
+            membership.status = Membership.Status.EXPIRED
+            membership.auto_renew = False
+            membership.save(update_fields=["status", "auto_renew"])
+
+            notify_membership_expired(membership)
 
         return membership
 

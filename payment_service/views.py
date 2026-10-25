@@ -74,10 +74,16 @@ class StripeWebhookView(View):
                     None,
                 )
 
-                if subscription_id:
-                    payment_service.mark_membership_as_expired_after_failed_renewal(
-                        subscription_id
+                if not subscription_id:
+                    logger.error(
+                        "Stripe invoice %s does not contain subscription ID",
+                        invoice.id,
                     )
+                    return HttpResponse(status=500)
+
+                payment_service.mark_membership_as_expired_after_failed_renewal(
+                    subscription_id
+                )
 
         elif event.type == "invoice.paid":
             invoice = event.data.object
@@ -88,6 +94,20 @@ class StripeWebhookView(View):
                     "subscription",
                     None,
                 )
+
+                if not invoice.lines.data:
+                    logger.error(
+                        "Stripe invoice %s does not contain line items",
+                        invoice.id,
+                    )
+                    return HttpResponse(status=500)
+
+                if not subscription_id:
+                    logger.error(
+                        "Stripe invoice %s does not contain subscription ID",
+                        invoice.id,
+                    )
+                    return HttpResponse(status=500)
 
                 if subscription_id:
                     payment_service.renew_membership(
