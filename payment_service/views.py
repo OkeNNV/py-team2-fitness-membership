@@ -19,6 +19,26 @@ class StripeWebhookView(View):
 
     http_method_names = ["post"]
 
+    @staticmethod
+    def _get_invoice_subscription_id(invoice) -> str | None:
+        """Return the subscription ID from current or legacy invoices."""
+        subscription = getattr(invoice, "subscription", None)
+
+        if not subscription:
+            parent = getattr(invoice, "parent", None)
+            subscription_details = getattr(
+                parent,
+                "subscription_details",
+                None,
+            )
+            subscription = getattr(
+                subscription_details,
+                "subscription",
+                None,
+            )
+
+        return getattr(subscription, "id", subscription)
+
     def post(
         self,
         request: HttpRequest,
@@ -51,10 +71,63 @@ class StripeWebhookView(View):
             session = event.data.object
 
             if session.payment_status == "paid":
-                payment_service.mark_payment_as_paid_and_membership_as_active(session.id)
+                payment_service.mark_payment_as_paid_and_membership_as_active(
+                    session_id=session.id,
+                    subscription_id=getattr(
+                        session,
+                        "subscription",
+                        None,
+                    ),
+                )
 
         elif event.type == "checkout.session.expired":
             session = event.data.object
             payment_service.mark_payment_as_expired(session.id)
+
+        elif event.type == "invoice.payment_failed":
+            invoice = event.data.object
+
+            if invoice.billing_reason == "subscription_cycle":
+                subscription_id = self._get_invoice_subscription_id(
+                    invoice
+                )
+
+                if not subscription_id:
+                    logger.error(
+                        "Stripe invoice %s does not contain subscription ID",
+                        invoice.id,
+                    )
+                    return HttpResponse(status=500)
+
+                payment_service.mark_membership_as_expired_after_failed_renewal(
+                    subscription_id
+                )
+
+        elif event.type == "invoice.paid":
+            invoice = event.data.object
+
+            if invoice.billing_reason == "subscription_cycle":
+                subscription_id = self._get_invoice_subscription_id(
+                    invoice
+                )
+
+                if not invoice.lines.data:
+                    logger.error(
+                        "Stripe invoice %s does not contain line items",
+                        invoice.id,
+                    )
+                    return HttpResponse(status=500)
+
+                if not subscription_id:
+                    logger.error(
+                        "Stripe invoice %s does not contain subscription ID",
+                        invoice.id,
+                    )
+                    return HttpResponse(status=500)
+
+                payment_service.renew_membership(
+                    subscription_id=subscription_id,
+                    period_end=invoice.lines.data[0].period.end,
+                )
 
         return HttpResponse(status=200)

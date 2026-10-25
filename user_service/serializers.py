@@ -2,7 +2,6 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.utils.translation import gettext as _
 from rest_framework import serializers
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -61,7 +60,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         """Update user profile and optionally change password."""
-        validated_data.pop("old_password", None)  # <--- просто видаляємо, без присвоєння у змінну
+        validated_data.pop("old_password", None)
         new_password = validated_data.pop("new_password", None)
 
         user = super().update(instance, validated_data)

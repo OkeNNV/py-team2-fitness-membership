@@ -150,7 +150,8 @@ def _build_card(title: str, rows: Sequence[tuple[str, object]]) -> str:
     This is the only place where HTML escaping happens. The title and all
     values are escaped, so callers must pass raw (unescaped) text. Labels are
     written by developers and are inserted as is. Values are converted to
-    str before escaping, so None is shown as "None".
+    str before escaping, so None is shown as a dash and values longer than
+    _MAX_VALUE_LENGTH are shortened with "…".
 
     Args:
         title (str): Event headline shown in bold at the top.
@@ -160,7 +161,7 @@ def _build_card(title: str, rows: Sequence[tuple[str, object]]) -> str:
     Returns:
         str: HTML-formatted message (parse_mode=HTML).
     """
-    lines = [f"<b>{label}:</b> {html.escape(str(value), quote=False)}" for label, value in rows]
+    lines = [f"<b>{label}:</b> {_prepare_value(value)}" for label, value in rows]
     return f"<b>{html.escape(title, quote=False)}</b>\n\n" + "\n".join(lines)
 
 
@@ -190,7 +191,7 @@ def build_membership_created_message(membership: Membership) -> str:
             ("Price paid", _format_money(membership.price_at_purchase)),
             ("Period", _format_period(membership.start_date, membership.end_date)),
             ("Status", _STATUS_LABELS.get(membership.status, membership.status)),
-            ("Auto-renew", _AUTO_RENEW_LABELS[membership.auto_renew]),
+            ("Auto-renew", _AUTO_RENEW_LABELS[bool(membership.auto_renew)]),
         ],
     )
 
@@ -284,7 +285,7 @@ def build_membership_expired_message(membership: Membership) -> str:
             ("Member", _format_member(membership.member)),
             ("Plan", _format_plan(membership.plan)),
             ("Ended", _format_date(membership.end_date)),
-            ("Auto-renew", _AUTO_RENEW_LABELS[membership.auto_renew]),
+            ("Auto-renew", _AUTO_RENEW_LABELS[bool(membership.auto_renew)]),
         ],
     )
 
