@@ -51,10 +51,48 @@ class StripeWebhookView(View):
             session = event.data.object
 
             if session.payment_status == "paid":
-                payment_service.mark_payment_as_paid_and_membership_as_active(session.id)
+                payment_service.mark_payment_as_paid_and_membership_as_active(
+                    session_id=session.id,
+                    subscription_id=getattr(
+                        session,
+                        "subscription",
+                        None,
+                    ),
+                )
 
         elif event.type == "checkout.session.expired":
             session = event.data.object
             payment_service.mark_payment_as_expired(session.id)
+
+        elif event.type == "invoice.payment_failed":
+            invoice = event.data.object
+
+            if invoice.billing_reason == "subscription_cycle":
+                subscription_id = getattr(
+                    invoice,
+                    "subscription",
+                    None,
+                )
+
+                if subscription_id:
+                    payment_service.mark_membership_as_expired_after_failed_renewal(
+                        subscription_id
+                    )
+
+        elif event.type == "invoice.paid":
+            invoice = event.data.object
+
+            if invoice.billing_reason == "subscription_cycle":
+                subscription_id = getattr(
+                    invoice,
+                    "subscription",
+                    None,
+                )
+
+                if subscription_id:
+                    payment_service.renew_membership(
+                        subscription_id=subscription_id,
+                        period_end=invoice.lines.data[0].period.end,
+                    )
 
         return HttpResponse(status=200)

@@ -1,4 +1,5 @@
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, timezone
 
 from django.db import transaction
 from stripe import StripeClient
@@ -299,7 +300,11 @@ class PaymentService:
         )
 
     @transaction.atomic
-    def mark_payment_as_paid_and_membership_as_active(self, session_id: str) -> Payment:
+    def mark_payment_as_paid_and_membership_as_active(
+            self,
+            session_id: str,
+            subscription_id: str | None = None,
+    ) -> Payment:
         """Mark a payment as paid and apply its membership changes."""
         payment = (
             Payment.objects
@@ -320,9 +325,20 @@ class PaymentService:
         )
 
         if payment.payment_type == Payment.Type.MEMBERSHIP_PURCHASE:
-
             membership.status = Membership.Status.ACTIVE
-            membership.save(update_fields=["status"])
+            update_fields = ["status"]
+
+            if membership.auto_renew:
+                if not subscription_id:
+                    raise ValueError(
+                        "Subscription checkout does not contain "
+                        "a Stripe subscription ID"
+                    )
+
+                membership.stripe_subscription_id = subscription_id
+                update_fields.append("stripe_subscription_id")
+
+            membership.save(update_fields=update_fields)
 
         elif payment.payment_type == Payment.Type.UPGRADE_FEE:
             if payment.target_plan is None:
@@ -360,3 +376,51 @@ class PaymentService:
         payment.save(update_fields=["status"])
 
         return payment
+
+    @transaction.atomic
+    def mark_membership_as_expired_after_failed_renewal(
+            self,
+            subscription_id: str,
+    ) -> Membership:
+        """Expire a membership after a failed recurring payment."""
+        membership = (
+            Membership.objects
+            .select_for_update()
+            .get(stripe_subscription_id=subscription_id)
+        )
+
+        if membership.status == Membership.Status.EXPIRED:
+            return membership
+
+        membership.status = Membership.Status.EXPIRED
+        membership.save(update_fields=["status"])
+
+        return membership
+
+    @transaction.atomic
+    def renew_membership(
+            self,
+            subscription_id: str,
+            period_end: int,
+    ) -> Membership:
+        """Renew a membership after a successful recurring payment."""
+        membership = (
+            Membership.objects
+            .select_for_update()
+            .get(stripe_subscription_id=subscription_id)
+        )
+
+        membership.end_date = datetime.fromtimestamp(
+            period_end,
+            tz=timezone.utc,
+        ).date()
+        membership.status = Membership.Status.ACTIVE
+
+        membership.save(
+            update_fields=[
+                "end_date",
+                "status",
+            ]
+        )
+
+        return membership
