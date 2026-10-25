@@ -70,6 +70,10 @@ class MembershipViewSet(
 
     def get_queryset(self):
         """Retrieve memberships based on user role and apply date range filters."""
+
+        if getattr(self, "swagger_fake_view", False):
+            return Membership.objects.none()
+
         user = self.request.user
         qs = Membership.objects.select_related(
             "member", "plan"
@@ -337,7 +341,6 @@ class MembershipViewSet(
             "Creates a Stripe Checkout session for upgrading "
             "the membership to a more expensive plan."
         ),
-        request=MembershipUpgradeSerializer,
         parameters=[
             OpenApiParameter(name="plan_id", description="New plan ID", required=False, type=int),
         ],
