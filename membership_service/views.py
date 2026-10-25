@@ -353,7 +353,7 @@ class MembershipViewSet(
     @action(detail=True, methods=["post"])
     def resume(self, request, pk=None):
         """Process resume action on a frozen membership."""
-        membership = self.get_object()
+        membership = Membership.objects.get(pk=pk)
 
         if membership.status != Membership.Status.FROZEN:
             return Response(
