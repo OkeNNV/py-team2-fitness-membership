@@ -19,6 +19,26 @@ class StripeWebhookView(View):
 
     http_method_names = ["post"]
 
+    @staticmethod
+    def _get_invoice_subscription_id(invoice) -> str | None:
+        """Return the subscription ID from current or legacy invoices."""
+        subscription = getattr(invoice, "subscription", None)
+
+        if not subscription:
+            parent = getattr(invoice, "parent", None)
+            subscription_details = getattr(
+                parent,
+                "subscription_details",
+                None,
+            )
+            subscription = getattr(
+                subscription_details,
+                "subscription",
+                None,
+            )
+
+        return getattr(subscription, "id", subscription)
+
     def post(
         self,
         request: HttpRequest,
@@ -68,10 +88,8 @@ class StripeWebhookView(View):
             invoice = event.data.object
 
             if invoice.billing_reason == "subscription_cycle":
-                subscription_id = getattr(
-                    invoice,
-                    "subscription",
-                    None,
+                subscription_id = self._get_invoice_subscription_id(
+                    invoice
                 )
 
                 if not subscription_id:
@@ -89,10 +107,8 @@ class StripeWebhookView(View):
             invoice = event.data.object
 
             if invoice.billing_reason == "subscription_cycle":
-                subscription_id = getattr(
-                    invoice,
-                    "subscription",
-                    None,
+                subscription_id = self._get_invoice_subscription_id(
+                    invoice
                 )
 
                 if not invoice.lines.data:
@@ -109,10 +125,9 @@ class StripeWebhookView(View):
                     )
                     return HttpResponse(status=500)
 
-                if subscription_id:
-                    payment_service.renew_membership(
-                        subscription_id=subscription_id,
-                        period_end=invoice.lines.data[0].period.end,
-                    )
+                payment_service.renew_membership(
+                    subscription_id=subscription_id,
+                    period_end=invoice.lines.data[0].period.end,
+                )
 
         return HttpResponse(status=200)

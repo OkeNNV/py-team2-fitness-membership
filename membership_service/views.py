@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from django.utils import timezone
 
 import django_filters
 from django.db import transaction
@@ -12,6 +13,7 @@ from drf_spectacular.utils import (
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from stripe import StripeError
 
 from membership_service.models import Membership
 from membership_service.serializers import (
@@ -258,6 +260,18 @@ class MembershipViewSet(viewsets.ModelViewSet):
         frozen_from = serializer.validated_data["frozen_from"]
         frozen_to = serializer.validated_data["frozen_to"]
 
+        today = timezone.localdate()
+
+        if frozen_from != today:
+            return Response(
+                {
+                    "error": (
+                        "Freeze must start on the current date."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if not (membership.start_date <= frozen_from <= membership.end_date):
             return Response(
                 {
@@ -269,15 +283,42 @@ class MembershipViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        freeze_days = (frozen_to - frozen_from).days + 1
+        freeze_days = (frozen_to - frozen_from).days
+        new_end_date = membership.end_date + timedelta(days=freeze_days)
+
+        try:
+            PaymentService().update_subscription_trial_end(
+                membership=membership,
+                new_billing_date=new_end_date,
+            )
+        except ValueError as error:
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except StripeError:
+            return Response(
+                {
+                    "error": (
+                        "The Stripe billing date could not be updated. "
+                        "The membership was not frozen."
+                    )
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         membership.status = Membership.Status.FROZEN
         membership.frozen_from = frozen_from
         membership.frozen_to = frozen_to
-        membership.end_date = membership.end_date + timedelta(
-            days=freeze_days
+        membership.end_date = new_end_date
+        membership.save(
+            update_fields=[
+                "status",
+                "frozen_from",
+                "frozen_to",
+                "end_date",
+            ]
         )
-        membership.save()
 
         return Response(
             MembershipSerializer(membership).data,
@@ -320,7 +361,9 @@ class MembershipViewSet(viewsets.ModelViewSet):
             )
 
         membership.status = Membership.Status.ACTIVE
-        membership.save()
+        membership.save(
+            update_fields=["status"]
+        )
 
         return Response(
             MembershipSerializer(membership).data,
@@ -352,6 +395,19 @@ class MembershipViewSet(viewsets.ModelViewSet):
         """Process plan upgrade for an existing membership."""
         membership = self.get_object()
 
+        if membership.status not in {
+            Membership.Status.ACTIVE,
+            Membership.Status.FROZEN,
+        }:
+            return Response(
+                {
+                    "error": (
+                        "Only active or frozen memberships can be upgraded."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         plan_id = request.query_params.get("plan_id") or request.data.get("plan_id")
 
         serializer = MembershipUpgradeSerializer(data={"plan_id": plan_id})
@@ -364,6 +420,20 @@ class MembershipViewSet(viewsets.ModelViewSet):
                 {
                     "error": (
                         "Upgrade is only allowed to a plan with a higher price."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+                membership.auto_renew
+                and new_plan.duration_days != membership.plan.duration_days
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Auto-renew membership can only be upgraded "
+                        "to a plan with the same duration."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -417,4 +487,51 @@ class MembershipViewSet(viewsets.ModelViewSet):
         return Response(
             PaymentSerializer(payment).data,
             status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="cancel-renewal",
+    )
+    def cancel_renewal(self, request, pk=None):
+        """Cancel automatic renewal at the end of the paid period."""
+        membership = self.get_object()
+
+        if not membership.auto_renew:
+            return Response(
+                {
+                    "message": (
+                        "Automatic renewal is already disabled."
+                    )
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        try:
+            PaymentService().cancel_subscription_at_period_end(
+                membership
+            )
+        except ValueError as error:
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except StripeError:
+            return Response(
+                {
+                    "error": (
+                        "Automatic renewal could not be disabled "
+                        "in Stripe."
+                    )
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        membership.auto_renew = False
+        membership.save(update_fields=["auto_renew"])
+
+        return Response(
+            MembershipSerializer(membership).data,
+            status=status.HTTP_200_OK,
         )

@@ -19,3 +19,24 @@ class MembershipPlanSerializer(serializers.ModelSerializer):
             "tier",
         ]
         read_only_fields = ["id", "stripe_product_id"]
+
+    def validate(self, attrs):
+        """Prevent billing changes after a plan is synchronized with Stripe."""
+        plan = self.instance
+
+        if plan is None or not plan.stripe_product_id:
+            return attrs
+
+        errors = {}
+
+        for field in ("price", "duration_days"):
+            if field in attrs and attrs[field] != getattr(plan, field):
+                errors[field] = (
+                    "This field cannot be changed after the plan is "
+                    "synchronized with Stripe. Create a new plan instead."
+                )
+
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        return attrs

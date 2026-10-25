@@ -71,3 +71,14 @@ def send_expiration_reminders() -> int:
             sent += 1
 
     return sent
+
+
+@shared_task(ignore_result=True)
+def unfreeze_memberships() -> int:
+    """Activate memberships whose freeze period has ended."""
+    today = timezone.localdate()
+
+    return Membership.objects.filter(
+        status=Membership.Status.FROZEN,
+        frozen_to__lte=today,
+    ).update(status=Membership.Status.ACTIVE)

@@ -36,6 +36,7 @@ class MembershipSerializer(serializers.ModelSerializer):
             "start_date",
             "end_date",
             "status",
+            "auto_renew",
             "price_at_purchase",
             "frozen_from",
             "frozen_to",
@@ -83,7 +84,7 @@ class MembershipFreezeSerializer(serializers.Serializer):
         if frozen_from > frozen_to:
             raise serializers.ValidationError("Freeze start date cannot be later than the end date")
 
-        freeze_days = (frozen_to - frozen_from).days + 1
+        freeze_days = (frozen_to - frozen_from).days
         if freeze_days > 30:
             raise serializers.ValidationError("Maximum freeze window cannot exceed 30 days.")
 
