@@ -13,7 +13,12 @@ def test_membership_creation():
     """Test that a Membership instance can be created and properties work."""
     user = User.objects.create_user(email="test@example.com", password="password123")
 
-    plan = MembershipPlan.objects.create(name="Base Plan", price=Decimal("10.00"), duration_days=30)
+    plan = MembershipPlan.objects.create(
+        name="Base Plan",
+        code="BASE_PLAN",
+        price=Decimal("10.00"),
+        duration_days=30
+    )
 
     membership = Membership.objects.create(
         member=user,
