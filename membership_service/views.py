@@ -24,6 +24,11 @@ from payment_service.models import Payment
 from payment_service.services import PaymentService
 from payment_service.serializers import PaymentSerializer
 
+from notification_service.services import (
+    notify_membership_created,
+    notify_membership_frozen,
+)
+
 
 class IsOwnerOrStaff(permissions.BasePermission):
     """Permission allowing owners to manage their memberships or staff to manage all."""
@@ -128,6 +133,8 @@ class MembershipViewSet(
             )
 
             payment = PaymentService().create_checkout_session(membership)
+
+        notify_membership_created(membership)
 
         response_data = {
             "membership": MembershipSerializer(
@@ -274,6 +281,8 @@ class MembershipViewSet(
         membership.frozen_to = frozen_to
         membership.end_date = membership.end_date + timedelta(days=freeze_days)
         membership.save()
+
+        notify_membership_frozen(membership)
 
         return Response(
             MembershipSerializer(membership).data,
