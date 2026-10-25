@@ -27,7 +27,7 @@ class UserCreateSerializerTests(TestCase):
         self.assertTrue(user.is_active)
 
     def test_password_too_short(self):
-        """Test validation error when password is shorter than min_length (5).[cite: 2]"""
+        """Test validation error when password is shorter than min_length (5)."""
         data = {
             "email": "short@example.com",
             "password": "123",  # Less than 5 chars
@@ -97,7 +97,7 @@ class UserSerializerTests(TestCase):
         self.assertIn("old_password", serializer.errors)
 
     def test_change_password_missing_old_password(self):
-        """Test error when new password is provided but old password is missing.[cite: 2]"""
+        """Test error when new password is provided but old password is missing."""
         data = {
             "new_password": "newsecurepassword456",
         }
