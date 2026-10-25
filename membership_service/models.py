@@ -54,6 +54,12 @@ class Membership(models.Model):
     price_at_purchase = models.DecimalField(
         max_digits=8, decimal_places=2, validators=[MinValueValidator(0)]
     )
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        unique=True,
+    )
     frozen_from = models.DateField(null=True, blank=True)
     frozen_to = models.DateField(null=True, blank=True)
 
