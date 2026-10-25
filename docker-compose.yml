@@ -83,6 +83,16 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  bot:
+    build:
+      context: .
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+    command: python manage.py run_telegram_bot
+    restart: unless-stopped
+
 volumes:
   my_db:
   my_media:

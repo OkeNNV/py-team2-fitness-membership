@@ -53,8 +53,10 @@ async def run_bot(token: str) -> None:
     default = DefaultBotProperties(parse_mode=ParseMode.HTML)
 
     async with Bot(token=token, default=default) as bot:
+        # Commands sent while the bot was offline are dropped, so it does not
+        # answer them all at once after a restart.
+        await bot.delete_webhook(drop_pending_updates=True)
         await dispatcher.start_polling(
             bot,
             allowed_updates=dispatcher.resolve_used_update_types(),
-            drop_pending_updates=True,
         )
