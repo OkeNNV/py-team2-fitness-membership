@@ -9,7 +9,7 @@ from plan_service.models import MembershipPlan
             "Valid Membership Plan Example",
             summary="Valid Membership Plan Example",
             description=(
-                    "An example of a basic monthly subscription plan with valid price and duration."
+                    "Available tiers for subscription: BASIC / STANDARD / PREMIUM"
             ),
             value={
                 "name": "Monthly Basic",
@@ -38,3 +38,13 @@ class MembershipPlanSerializer(serializers.ModelSerializer):
             "tier",
         ]
         read_only_fields = ["id", "stripe_product_id"]
+
+    def validate_tier(self, value):
+        """Validate that the tier is one of the allowed choices, formatting error with slashes."""
+        valid_tiers = [choice[0] for choice in MembershipPlan.Tier.choices]
+        if value not in valid_tiers:
+            options_str = " / ".join(valid_tiers)
+            raise serializers.ValidationError(
+                f"Invalid tier. Available options: {options_str}"
+            )
+        return value
