@@ -10,7 +10,7 @@ from drf_spectacular.utils import (
     inline_serializer,
     extend_schema,
 )
-from rest_framework import filters, permissions, status, viewsets
+from rest_framework import filters, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from stripe import StripeError
@@ -25,6 +25,11 @@ from membership_service.serializers import (
 from payment_service.models import Payment
 from payment_service.services import PaymentService
 from payment_service.serializers import PaymentSerializer
+
+from notification_service.services import (
+    notify_membership_created,
+    notify_membership_frozen,
+)
 
 
 class IsOwnerOrStaff(permissions.BasePermission):
@@ -52,7 +57,12 @@ class MembershipFilter(django_filters.FilterSet):
 
 
 @extend_schema(tags=["Memberships"])
-class MembershipViewSet(viewsets.ModelViewSet):
+class MembershipViewSet(
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
     """ViewSet for managing membership lifecycles (purchase, freeze, resume, upgrade, list)."""
 
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrStaff]
@@ -62,6 +72,9 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Retrieve memberships based on user role and apply date range filters."""
+        if getattr(self, "swagger_fake_view", False):
+            return Membership.objects.none()
+
         user = self.request.user
         qs = Membership.objects.select_related(
             "member", "plan"
@@ -126,6 +139,8 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
             payment = PaymentService().create_checkout_session(membership)
 
+        notify_membership_created(membership)
+
         response_data = {
             "membership": MembershipSerializer(
                 membership,
@@ -142,44 +157,38 @@ class MembershipViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="List or filter memberships",
         description=(
-                "Returns a list of memberships. Regular users see only their own, "
-                "while staff members can view all and filter by member_id, "
-                "status, auto_renew, and date ranges."
+            "Returns a list of memberships. Regular users see only their own, "
+            "while staff members can view all and filter by member_id, "
+            "status, auto_renew, and date ranges."
         ),
         parameters=[
             OpenApiParameter(
                 name="from",
-                description=(
-                    "Filter memberships starting on or after this date "
-                    "(YYYY-MM-DD)"
-                ),
+                description="Filter memberships starting "
+                            "on or after this date (YYYY-MM-DD)",
                 required=False,
-                type=str
+                type=str,
             ),
             OpenApiParameter(
                 name="to",
-                description=(
-                    "Filter memberships ending on or before this date "
-                    "(YYYY-MM-DD)"
-                ),
+                description="Filter memberships ending "
+                            "on or before this date (YYYY-MM-DD)",
                 required=False,
-                type=str
+                type=str,
             ),
             OpenApiParameter(
                 name="status",
-                description=(
-                    "Filter by status (ACTIVE, EXPIRED, FROZEN)"
-                ),
+                description="Filter by status (ACTIVE, EXPIRED, FROZEN)",
                 required=False,
-                type=str
+                type=str,
             ),
             OpenApiParameter(
                 name="member_id",
                 description="Filter by member ID (Staff only)",
                 required=False,
-                type=int
+                type=int,
             ),
-        ]
+        ],
     )
     def list(self, request, *args, **kwargs):
         """Return a filtered list of memberships."""
@@ -188,9 +197,9 @@ class MembershipViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Retrieve membership details",
         description=(
-                "Returns detailed information about a specific membership, "
-                "including associated plans and payment history."
-        )
+            "Returns detailed information about a specific membership, "
+            "including associated plans and payment history."
+        ),
     )
     def retrieve(self, request, *args, **kwargs):
         """Return details for a specific membership instance."""
@@ -199,8 +208,8 @@ class MembershipViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Freeze a membership",
         description=(
-                "Freezes an active membership within its validity window. "
-                "Accepts from and to via query parameters or body."
+            "Freezes an active membership within its validity window. "
+            "Accepts frozen_from and frozen_to in request body."
         ),
         request=MembershipFreezeSerializer,
         parameters=[
@@ -224,8 +233,8 @@ class MembershipViewSet(viewsets.ModelViewSet):
                     "Invalid date range, max 30 days exceeded, "
                     "or already frozen."
                 )
-            )
-        }
+            ),
+        },
     )
     @action(detail=True, methods=["post"])
     def freeze(self, request, pk=None):
@@ -235,7 +244,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
         if membership.status != Membership.Status.ACTIVE:
             return Response(
                 {"error": "Only active memberships can be frozen."},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if membership.was_frozen:
@@ -246,7 +255,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
                         "(allowed only once)."
                     )
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         frozen_from = request.query_params.get("from") or request.data.get("frozen_from")
@@ -276,11 +285,10 @@ class MembershipViewSet(viewsets.ModelViewSet):
             return Response(
                 {
                     "error": (
-                        "Freeze dates are outside the membership validity "
-                        "period."
+                        "Freeze dates are outside the membership validity period."
                     )
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         freeze_days = (frozen_to - frozen_from).days
@@ -320,23 +328,25 @@ class MembershipViewSet(viewsets.ModelViewSet):
             ]
         )
 
+        notify_membership_frozen(membership)
+
         return Response(
             MembershipSerializer(membership).data,
-            status=status.HTTP_200_OK
+            status=status.HTTP_200_OK,
         )
 
     @extend_schema(
         summary="Resume a frozen membership",
         description=(
-                "Unfreezes a currently frozen membership and sets its status "
-                "back to ACTIVE."
+            "Unfreezes a currently frozen membership and sets its status "
+            "back to ACTIVE."
         ),
         responses={
             200: MembershipSerializer,
             400: OpenApiResponse(
                 description="Membership is not in FROZEN state."
-            )
-        }
+            ),
+        },
     )
     @action(detail=True, methods=["post"])
     def resume(self, request, pk=None):
@@ -346,7 +356,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
         if membership.status != Membership.Status.FROZEN:
             return Response(
                 {"error": "Membership is not currently frozen."},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         has_paid_purchase = membership.payments.filter(
@@ -376,7 +386,6 @@ class MembershipViewSet(viewsets.ModelViewSet):
             "Creates a Stripe Checkout session for upgrading "
             "the membership to a more expensive plan."
         ),
-        request=MembershipUpgradeSerializer,
         parameters=[
             OpenApiParameter(name="plan_id", description="New plan ID", required=False, type=int),
         ],
