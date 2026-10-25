@@ -70,7 +70,6 @@ class MembershipViewSet(
 
     def get_queryset(self):
         """Retrieve memberships based on user role and apply date range filters."""
-
         if getattr(self, "swagger_fake_view", False):
             return Membership.objects.none()
 
