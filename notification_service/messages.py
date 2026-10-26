@@ -39,7 +39,9 @@ class NotificationEvent(str, Enum):
     """Events that produce a staff notification. Used by build_message()."""
 
     MEMBERSHIP_CREATED = "membership_created"
+    MEMBERSHIP_ACTIVATED = "membership_activated"
     MEMBERSHIP_FROZEN = "membership_frozen"
+    MEMBERSHIP_UNFROZEN = "membership_unfrozen"
     MEMBERSHIP_EXPIRED = "membership_expired"
     EXPIRATION_REMINDER = "expiration_reminder"
     PAYMENT_SUCCESS = "payment_success"
@@ -232,6 +234,70 @@ def build_membership_frozen_message(membership: Membership) -> str:
     )
 
 
+def build_membership_activated_message(membership: Membership) -> str:
+    """Build the notification text about a membership that became active.
+
+    Sent when a membership leaves the initial FROZEN state after the first
+    payment. The text includes the membership id, member, plan, the active
+    period and the auto-renew flag.
+
+    Args:
+        membership (Membership): The membership that was just activated. Its
+            member and plan are read, so callers formatting many memberships
+            should use select_related("member", "plan").
+
+    Returns:
+        str: HTML-formatted message ready to be sent to Telegram.
+    """
+    return _build_card(
+        "✅ Membership activated",
+        [
+            ("ID", f"#{membership.pk}"),
+            ("Member", _format_member(membership.member)),
+            ("Plan", _format_plan(membership.plan)),
+            ("Status", _STATUS_LABELS.get(membership.status, membership.status)),
+            ("Period", _format_period(membership.start_date, membership.end_date)),
+            ("Auto-renew", _AUTO_RENEW_LABELS[bool(membership.auto_renew)]),
+        ],
+    )
+
+
+def build_membership_unfrozen_message(membership: Membership) -> str:
+    """Build the notification text about a membership that was unfrozen.
+
+    The text includes the membership id, member, plan, the freeze period
+    that has just ended, the current status and the end date.
+
+    Args:
+        membership (Membership): The membership that was just unfrozen. Its
+            member and plan are read, so callers formatting many memberships
+            should use select_related("member", "plan").
+
+    Returns:
+        str: HTML-formatted message ready to be sent to Telegram.
+    """
+    if membership.frozen_from is None or membership.frozen_to is None:
+        frozen_period = _DASH
+    else:
+        frozen_period = _format_period(
+            membership.frozen_from,
+            membership.frozen_to,
+            days=membership.frozen_days,
+        )
+
+    return _build_card(
+        "🔥 Membership unfrozen",
+        [
+            ("ID", f"#{membership.pk}"),
+            ("Member", _format_member(membership.member)),
+            ("Plan", _format_plan(membership.plan)),
+            ("Status", _STATUS_LABELS.get(membership.status, membership.status)),
+            ("Was frozen", frozen_period),
+            ("Ends", _format_date(membership.end_date)),
+        ],
+    )
+
+
 def build_payment_success_message(payment: Payment) -> str:
     """Build the notification text about a successful payment.
 
@@ -320,7 +386,9 @@ def build_expiration_reminder_message(membership: Membership, days_left: int) ->
 
 _BUILDERS: dict[NotificationEvent, Callable[..., str]] = {
     NotificationEvent.MEMBERSHIP_CREATED: build_membership_created_message,
+    NotificationEvent.MEMBERSHIP_ACTIVATED: build_membership_activated_message,
     NotificationEvent.MEMBERSHIP_FROZEN: build_membership_frozen_message,
+    NotificationEvent.MEMBERSHIP_UNFROZEN: build_membership_unfrozen_message,
     NotificationEvent.MEMBERSHIP_EXPIRED: build_membership_expired_message,
     NotificationEvent.EXPIRATION_REMINDER: build_expiration_reminder_message,
     NotificationEvent.PAYMENT_SUCCESS: build_payment_success_message,

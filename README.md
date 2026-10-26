@@ -2,8 +2,9 @@
 
 ## Telegram notifications
 
-Club staff get short Telegram messages about important events: a new membership, a freeze,
-a successful payment, an expired membership and upcoming expirations. Messages are sent
+Club staff get short Telegram messages about important events: a new membership, its
+activation, a freeze and an unfreeze, a successful payment, an expired membership and upcoming
+expirations. Messages are sent
 in the background, so a slow or unavailable Telegram never slows down or breaks an API request.
 
 ### How it works
@@ -85,8 +86,10 @@ If the worker is not running, messages simply wait in the queue and nothing arri
 |---|---|---|---|---|
 | New membership | a membership is created | `notify_membership_created(membership)` | membership purchase, `membership_service/views.py` | ⏳ pending |
 | Membership frozen | a freeze is saved | `notify_membership_frozen(membership)` | `freeze` action, `membership_service/views.py` | ⏳ pending |
+| Membership unfrozen | a frozen membership becomes `ACTIVE` again, by hand or when the freeze ends | `notify_membership_unfrozen(membership)` | `resume` action, `membership_service/views.py`; `unfreeze_memberships`, `membership_service/tasks.py` | ⏳ pending |
 | Payment received | a payment becomes `PAID` for the first time | `notify_payment_success(payment)` | `PaymentService.mark_payment_as_paid_and_membership_as_active`, `payment_service/services.py` | ⏳ pending |
-| Membership expired | the daily job marks a membership as `EXPIRED` | `notify_membership_expired(membership)` | `mark_expired_memberships`, `membership_service/tasks.py` | ✅ |
+| Membership activated | a new membership becomes `ACTIVE` after its first payment | `notify_membership_activated(membership)` | `PaymentService.mark_payment_as_paid_and_membership_as_active`, `payment_service/services.py` | ⏳ pending |
+| Membership expired | the daily job marks a membership as `EXPIRED`, a renewal fails, or an unpaid membership expires | `notify_membership_expired(membership)` | `mark_expired_memberships`, `membership_service/tasks.py`; `PaymentService.mark_payment_as_expired`, `payment_service/services.py` | ✅ daily job, ⏳ pending for unpaid |
 | Expires soon | 7, 3 and 1 day before `end_date` | `notify_expiration_reminder(membership, days_left)` | `send_expiration_reminders`, `membership_service/tasks.py` | ✅ |
 
 The two daily jobs run every day at 08:00 in the `TIMEZONE` time zone and only look at `ACTIVE`
@@ -120,6 +123,17 @@ New end date: 2026-12-08
 ```
 
 ```
+🔥 Membership unfrozen
+
+ID: #12
+Member: Anna Kovalenko (anna.kovalenko@example.com)
+Plan: Gold (gold-30)
+Status: 🟢 Active
+Was frozen: 2026-11-10 → 2026-11-16 (7 days)
+Ends: 2026-12-08
+```
+
+```
 💰 Payment received
 
 Payment ID: #31
@@ -128,6 +142,17 @@ Type: 🛒 Membership purchase
 Amount: 49.99 USD
 Plan: Gold (gold-30)
 Membership ID: #12
+```
+
+```
+✅ Membership activated
+
+ID: #12
+Member: Anna Kovalenko (anna.kovalenko@example.com)
+Plan: Gold (gold-30)
+Status: 🟢 Active
+Period: 2026-11-01 → 2026-12-01 (30 days)
+Auto-renew: 🔄 Yes
 ```
 
 ```
@@ -173,7 +198,10 @@ Rules:
    continues.
 5. Call `notify_payment_success` only when the status really changes from `PENDING` to `PAID`,
    otherwise a repeated Stripe webhook sends the message twice.
-6. To add a new event: add it to `NotificationEvent` and write a builder in
+6. Call `notify_membership_activated` and `notify_membership_unfrozen` only after the status
+   was saved as `ACTIVE` and only when it really changed (not for a membership that was
+   already `ACTIVE`). For a bulk `.update()` load the objects first and notify each one.
+7. To add a new event: add it to `NotificationEvent` and write a builder in
    `notification_service/messages.py`, register it in `_BUILDERS` and in `_EVENT_SOURCES`
    (`notification_service/tasks.py`), then add a `notify_*` function.
 
