@@ -492,6 +492,7 @@ class MembershipViewSet(
             status=status.HTTP_201_CREATED,
         )
 
+    @extend_schema(request=None)
     @action(
         detail=True,
         methods=["post"],
