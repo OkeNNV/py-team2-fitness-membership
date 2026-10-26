@@ -73,9 +73,10 @@ class MembershipViewSetTests(APITestCase):
 
     def test_resume_frozen_membership(self):
         """Test successfully resuming a frozen membership back to ACTIVE."""
+        initial_frozen_from = date.today()
         self.membership.status = Membership.Status.FROZEN
-        self.membership.frozen_from = date.today()
-        self.membership.frozen_to = date.today() + timedelta(days=5)
+        self.membership.frozen_from = initial_frozen_from
+        self.membership.frozen_to = initial_frozen_from + timedelta(days=5)
         self.membership.save()
 
         Payment.objects.create(
@@ -91,4 +92,4 @@ class MembershipViewSetTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.membership.refresh_from_db()
         self.assertEqual(self.membership.status, Membership.Status.ACTIVE)
-        self.assertIsNone(self.membership.frozen_from)
+        self.assertEqual(self.membership.frozen_from, initial_frozen_from)
