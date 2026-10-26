@@ -362,6 +362,28 @@ class MembershipViewSet(
             if unused_days > 0:
                 membership.end_date -= timedelta(days=unused_days)
 
+                if membership.auto_renew:
+                    try:
+                        PaymentService().update_subscription_trial_end(
+                            membership=membership,
+                            new_billing_date=membership.end_date,
+                        )
+                    except ValueError as error:
+                        return Response(
+                            {"error": str(error)},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    except StripeError:
+                        return Response(
+                            {
+                                "error": (
+                                    "The Stripe billing date could not be updated. "
+                                    "The membership was not resumed."
+                                )
+                            },
+                            status=status.HTTP_502_BAD_GATEWAY,
+                        )
+
         membership.status = Membership.Status.ACTIVE
         membership.save(
             update_fields=["status", "frozen_from", "frozen_to", "end_date"]
