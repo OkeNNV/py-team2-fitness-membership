@@ -1,8 +1,12 @@
 from datetime import date, timedelta
+from decimal import Decimal
+
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
+
+from payment_service.models import Payment
 from plan_service.models import MembershipPlan
 from membership_service.models import Membership
 
@@ -43,14 +47,11 @@ class MembershipViewSetTests(APITestCase):
         )
 
     def test_freeze_active_membership(self):
-        """Test successfully freezing an active membership."""
+        """Test successfully freezing an active membership using query parameter 'to'."""
         url = reverse("membership-detail", kwargs={"pk": self.membership.id}) + "freeze/"
-        freeze_data = {
-            "frozen_from": date.today().isoformat(),
-            "frozen_to": (date.today() + timedelta(days=5)).isoformat()
-        }
+        freeze_to_date = (date.today() + timedelta(days=5)).isoformat()
 
-        response = self.client.post(url, freeze_data, format="json")
+        response = self.client.post(f"{url}?to={freeze_to_date}")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         self.membership.refresh_from_db()
@@ -65,12 +66,9 @@ class MembershipViewSetTests(APITestCase):
         self.membership.save()
 
         url = reverse("membership-detail", kwargs={"pk": self.membership.id}) + "freeze/"
-        freeze_data = {
-            "frozen_from": date.today().isoformat(),
-            "frozen_to": (date.today() + timedelta(days=5)).isoformat()
-        }
+        freeze_to_date = (date.today() + timedelta(days=5)).isoformat()
 
-        response = self.client.post(url, freeze_data, format="json")
+        response = self.client.post(f"{url}?to={freeze_to_date}")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_resume_frozen_membership(self):
@@ -80,8 +78,15 @@ class MembershipViewSetTests(APITestCase):
         self.membership.frozen_to = date.today() + timedelta(days=5)
         self.membership.save()
 
+        Payment.objects.create(
+            membership=self.membership,
+            payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
+            status=Payment.Status.PAID,
+            money_to_pay=Decimal("10.00"),
+        )
+
         url = reverse("membership-detail", kwargs={"pk": self.membership.id}) + "resume/"
-        response = self.client.post(url, format="json")
+        response = self.client.post(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.membership.refresh_from_db()
