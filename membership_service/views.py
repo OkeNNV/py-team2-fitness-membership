@@ -236,14 +236,11 @@ class MembershipViewSet(
         """Process freeze action on an active membership."""
         print("if membership freeze() init")
         membership = Membership.objects.get(pk=pk)
-        print(membership.id, membership.end_date, membership.frozen_from, membership.frozen_to)
         if membership.status != Membership.Status.ACTIVE:
             return Response(
                 {"error": "Only active memberships can be frozen."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        print(f"membersip was frozen: {membership.was_frozen}")
-        print(f"membership frozen from: {membership.frozen_from}")
         if membership.was_frozen:
             print("was frozen")
             return Response(
@@ -492,6 +489,7 @@ class MembershipViewSet(
             status=status.HTTP_201_CREATED,
         )
 
+    @extend_schema(request=None)
     @action(
         detail=True,
         methods=["post"],
