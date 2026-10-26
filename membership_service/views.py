@@ -101,7 +101,7 @@ class MembershipViewSet(
     @extend_schema(
         summary="Purchase a new membership",
         description=(
-            "Creates a membership and returns its Stripe Checkout payment session."
+                "Creates a membership and returns its Stripe Checkout payment session."
         ),
         request=MembershipCreateSerializer,
         responses={
@@ -114,8 +114,8 @@ class MembershipViewSet(
             ),
             400: OpenApiResponse(
                 description=(
-                    "Validation error, invalid plan, or the user already "
-                    "has an active/frozen membership."
+                        "Validation error, invalid plan, or the user already "
+                        "has an active/frozen membership."
                 )
             ),
         },
@@ -158,9 +158,9 @@ class MembershipViewSet(
     @extend_schema(
         summary="List or filter memberships",
         description=(
-            "Returns a list of memberships. Regular users see only their own, "
-            "while staff members can view all and filter by member_id, "
-            "status, auto_renew, and date ranges."
+                "Returns a list of memberships. Regular users see only their own, "
+                "while staff members can view all and filter by member_id, "
+                "status, auto_renew, and date ranges."
         ),
         parameters=[
             OpenApiParameter(
@@ -198,8 +198,8 @@ class MembershipViewSet(
     @extend_schema(
         summary="Retrieve membership details",
         description=(
-            "Returns detailed information about a specific membership, "
-            "including associated plans and payment history."
+                "Returns detailed information about a specific membership, "
+                "including associated plans and payment history."
         ),
     )
     def retrieve(self, request, *args, **kwargs):
@@ -209,8 +209,8 @@ class MembershipViewSet(
     @extend_schema(
         summary="Freeze a membership",
         description=(
-            "Freezes an active membership within its validity window. "
-            "Accepts freeze end date via query parameter 'to'."
+                "Freezes an active membership within its validity window. "
+                "Accepts freeze end date via query parameter 'to'."
         ),
         parameters=[
             OpenApiParameter(
@@ -225,8 +225,8 @@ class MembershipViewSet(
             200: MembershipSerializer,
             400: OpenApiResponse(
                 description=(
-                    "Invalid date range, max 30 days exceeded, "
-                    "or already frozen."
+                        "Invalid date range, max 30 days exceeded, "
+                        "or already frozen."
                 )
             ),
         },
@@ -234,15 +234,18 @@ class MembershipViewSet(
     @action(detail=True, methods=["post"])
     def freeze(self, request, pk=None):
         """Process freeze action on an active membership."""
+        print("if membership freeze() init")
         membership = Membership.objects.get(pk=pk)
-
+        print(membership.id, membership.end_date, membership.frozen_from, membership.frozen_to)
         if membership.status != Membership.Status.ACTIVE:
             return Response(
                 {"error": "Only active memberships can be frozen."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
+        print(f"membersip was frozen: {membership.was_frozen}")
+        print(f"membership frozen from: {membership.frozen_from}")
         if membership.was_frozen:
+            print("was frozen")
             return Response(
                 {
                     "error": (
@@ -321,8 +324,8 @@ class MembershipViewSet(
     @extend_schema(
         summary="Resume a frozen membership",
         description=(
-            "Unfreezes a currently frozen membership and sets its status "
-            "back to ACTIVE."
+                "Unfreezes a currently frozen membership and sets its status "
+                "back to ACTIVE."
         ),
         request=None,
         responses={
@@ -358,13 +361,11 @@ class MembershipViewSet(
 
         if membership.frozen_from and membership.frozen_to and today < membership.frozen_to:
             actual_freeze_start = max(membership.frozen_from, today)
-            unused_days = (membership.frozen_to - actual_freeze_start).days + 1
+            unused_days = (membership.frozen_to - actual_freeze_start).days
             if unused_days > 0:
                 membership.end_date -= timedelta(days=unused_days)
 
         membership.status = Membership.Status.ACTIVE
-        membership.frozen_from = None
-        membership.frozen_to = None
         membership.save(
             update_fields=["status", "frozen_from", "frozen_to", "end_date"]
         )
@@ -377,8 +378,8 @@ class MembershipViewSet(
     @extend_schema(
         summary="Create a membership upgrade payment",
         description=(
-            "Creates a Stripe Checkout session for upgrading "
-            "the membership to a more expensive plan."
+                "Creates a Stripe Checkout session for upgrading "
+                "the membership to a more expensive plan."
         ),
         request=None,
         parameters=[
@@ -388,8 +389,8 @@ class MembershipViewSet(
             201: PaymentSerializer,
             400: OpenApiResponse(
                 description=(
-                    "Invalid target plan, unpaid membership, "
-                    "or no payable upgrade period."
+                        "Invalid target plan, unpaid membership, "
+                        "or no payable upgrade period."
                 )
             ),
         },
