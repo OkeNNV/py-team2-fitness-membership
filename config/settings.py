@@ -176,12 +176,11 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_BEAT_SCHEDULE = {
     "mark-expired-memberships-daily": {
         "task": "membership_service.tasks.mark_expired_memberships",
-        "schedule": crontab(minute="*/1")
+        "schedule": crontab(hour=8, minute=0),
     },
     "send-expiration-reminders-daily": {
         "task": "membership_service.tasks.send_expiration_reminders",
-        "schedule": crontab(minute="*/1")
-
+        "schedule": crontab(hour=8, minute=0),
     },
     "unfreeze-memberships-daily": {
         "task": "membership_service.tasks.unfreeze_memberships",
