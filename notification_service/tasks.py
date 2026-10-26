@@ -25,7 +25,9 @@ RETRY_JITTER = 5  # seconds, random extra pause (0..RETRY_JITTER)
 # in the same query (so build_message does not make extra queries).
 _EVENT_SOURCES = {
     NotificationEvent.MEMBERSHIP_CREATED: (Membership, ("member", "plan")),
+    NotificationEvent.MEMBERSHIP_ACTIVATED: (Membership, ("member", "plan")),
     NotificationEvent.MEMBERSHIP_FROZEN: (Membership, ("member", "plan")),
+    NotificationEvent.MEMBERSHIP_UNFROZEN: (Membership, ("member", "plan")),
     NotificationEvent.MEMBERSHIP_EXPIRED: (Membership, ("member", "plan")),
     NotificationEvent.EXPIRATION_REMINDER: (Membership, ("member", "plan")),
     NotificationEvent.PAYMENT_SUCCESS: (

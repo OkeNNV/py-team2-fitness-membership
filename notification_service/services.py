@@ -66,6 +66,30 @@ def notify_membership_created(membership: Membership) -> None:
     _enqueue(NotificationEvent.MEMBERSHIP_CREATED, membership.pk)
 
 
+def notify_membership_activated(membership: Membership) -> None:
+    """Notify staff that a membership became active after the first payment.
+
+    Call it after the status is saved as ACTIVE, and only when the status
+    really changed, so a repeated webhook does not send a second message.
+
+    Args:
+        membership (Membership): The membership that was just activated.
+    """
+    _enqueue(NotificationEvent.MEMBERSHIP_ACTIVATED, membership.pk)
+
+
+def notify_membership_unfrozen(membership: Membership) -> None:
+    """Notify staff that a frozen membership was unfrozen (set back to ACTIVE).
+
+    Call it after the status is saved as ACTIVE. It is used both for a manual
+    resume and for the automatic unfreeze when the freeze period ends.
+
+    Args:
+        membership (Membership): The membership that was just unfrozen.
+    """
+    _enqueue(NotificationEvent.MEMBERSHIP_UNFROZEN, membership.pk)
+
+
 def notify_membership_frozen(membership: Membership) -> None:
     """Notify staff that a membership was frozen.
 

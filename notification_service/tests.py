@@ -25,7 +25,9 @@ from notification_service.exceptions import PermanentTelegramError, TemporaryTel
 from notification_service.messages import NotificationEvent, build_message
 from notification_service.services import (
     notify_expiration_reminder,
+    notify_membership_activated,
     notify_membership_created,
+    notify_membership_unfrozen,
     notify_payment_success,
 )
 from notification_service.tasks import MAX_RETRIES, send_notification
@@ -282,6 +284,34 @@ def test_payment_message_has_no_stripe_data():
     assert "cs_test_123" not in text
 
 
+def test_activated_message_shows_active_status_and_period():
+    """The activation card shows the new status, the plan and the active period."""
+    text = messages.build_membership_activated_message(make_membership())
+
+    assert "✅ Membership activated" in text
+    assert "🟢 Active" in text
+    assert "Gold &amp; Co (gold)" in text
+    assert "2026-01-01 → 2026-01-31 (30 days)" in text
+
+
+def test_unfrozen_message_shows_ended_freeze_and_end_date():
+    """The unfreeze card shows the freeze that ended; no dates give a dash."""
+    without = messages.build_membership_unfrozen_message(make_membership())
+    with_dates = messages.build_membership_unfrozen_message(
+        make_membership(
+            frozen_from=date(2026, 1, 10),
+            frozen_to=date(2026, 1, 20),
+            frozen_days=10,
+            end_date=date(2026, 2, 10),
+        )
+    )
+
+    assert "🔥 Membership unfrozen" in with_dates
+    assert "<b>Was frozen:</b> -" in without
+    assert "2026-01-10 → 2026-01-20 (10 days)" in with_dates
+    assert "<b>Ends:</b> 2026-02-10" in with_dates
+
+
 def test_build_message_picks_builder_and_rejects_unknown_event():
     """build_message dispatches by event (enum or string) and fails on unknown ones."""
     membership = make_membership()
@@ -340,6 +370,22 @@ def after_retries(count):
         yield
     finally:
         send_notification.pop_request()
+
+
+@pytest.mark.parametrize(
+    ("event", "title"),
+    [
+        ("membership_activated", "Membership activated"),
+        ("membership_unfrozen", "Membership unfrozen"),
+        ("membership_expired", "Membership expired"),
+    ],
+)
+def test_task_sends_status_change_events(membership, telegram_send, event, title):
+    """Every status-change event is loaded from the database and sent."""
+    send_notification.run(event, membership.pk)
+
+    telegram_send.assert_called_once()
+    assert title in telegram_send.call_args.args[0]
 
 
 def test_task_builds_and_sends_the_message(membership, telegram_send):
@@ -413,8 +459,10 @@ def test_task_gives_up_after_max_retries(membership, telegram_send, task_retry, 
     [
         (notify_membership_created, SimpleNamespace(pk=5), "membership_created", None),
         (notify_payment_success, SimpleNamespace(pk=6), "payment_success", None),
+        (notify_membership_activated, SimpleNamespace(pk=7), "membership_activated", None),
+        (notify_membership_unfrozen, SimpleNamespace(pk=8), "membership_unfrozen", None),
     ],
-    ids=["membership created", "payment success"],
+    ids=["membership created", "payment success", "membership activated", "membership unfrozen"],
 )
 def test_notify_queues_task_only_after_commit(
     django_capture_on_commit_callbacks, notify, arg, event, context
