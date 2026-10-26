@@ -114,8 +114,8 @@ class MembershipViewSet(
             ),
             400: OpenApiResponse(
                 description=(
-                        "Validation error, invalid plan, or the user already "
-                        "has an active/frozen membership."
+                    "Validation error, invalid plan, or the user already "
+                    "has an active/frozen membership."
                 )
             ),
         },
@@ -225,8 +225,8 @@ class MembershipViewSet(
             200: MembershipSerializer,
             400: OpenApiResponse(
                 description=(
-                        "Invalid date range, max 30 days exceeded, "
-                        "or already frozen."
+                    "Invalid date range, max 30 days exceeded, "
+                    "or already frozen."
                 )
             ),
         },
@@ -389,8 +389,8 @@ class MembershipViewSet(
             201: PaymentSerializer,
             400: OpenApiResponse(
                 description=(
-                        "Invalid target plan, unpaid membership, "
-                        "or no payable upgrade period."
+                    "Invalid target plan, unpaid membership, "
+                    "or no payable upgrade period."
                 )
             ),
         },
