@@ -154,7 +154,7 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
     "ROTATE_REFRESH_TOKENS": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
@@ -176,11 +176,12 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_BEAT_SCHEDULE = {
     "mark-expired-memberships-daily": {
         "task": "membership_service.tasks.mark_expired_memberships",
-        "schedule": crontab(hour=8, minute=0),
+        "schedule": crontab(minute="*/1")
     },
     "send-expiration-reminders-daily": {
         "task": "membership_service.tasks.send_expiration_reminders",
-        "schedule": crontab(hour=8, minute=0),
+        "schedule": crontab(minute="*/1")
+
     },
     "unfreeze-memberships-daily": {
         "task": "membership_service.tasks.unfreeze_memberships",
