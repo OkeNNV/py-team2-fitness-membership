@@ -295,3 +295,56 @@ task with its retry rules and the `notify_*` functions.
 | `notification_service/exceptions.py` | `TemporaryTelegramError`, `PermanentTelegramError` |
 | `notification_service/bot.py` | the bot with `/start` and `/chatid` |
 | `notification_service/management/commands/run_telegram_bot.py` | `python manage.py run_telegram_bot` |
+
+## Membership service
+
+The `Membership Service` manages the complete lifecycle of club memberships: purchasing, viewing, freezing, resuming, upgrading, and canceling automatic renewals. All endpoints are protected and respect role-based permissions (regular members manage only their own memberships, while staff members can view and filter all records).
+
+### Core Business Rules
+
+1. **Single Active Membership:** A user can have at most one `ACTIVE` or `FROZEN` membership at a time. This is enforced both at the application level (serializers/views) and guaranteed at the database level via a conditional `UniqueConstraint`.
+2. **Purchasing (`POST /api/memberships/`):** 
+   * Sets `start_date` to today and calculates `end_date` based on the selected plan's duration.
+   * Creates a `MEMBERSHIP_PURCHASE` payment record and generates a Stripe Checkout session.
+   * Triggers a staff notification via `notify_membership_created`.
+3. **Freezing (`POST /api/memberships/<id>/freeze/?to=YYYY-MM-DD`):**
+   * Allowed only for `ACTIVE` memberships within their validity window.
+   * **One-time limit:** Each membership can be frozen only once (`was_frozen = True`).
+   * **Duration limit:** Maximum freeze window cannot exceed **30 days**.
+   * Shifts the membership `end_date` forward by the number of frozen days and updates Stripe trial/billing end if auto-renew is enabled.
+4. **Resuming (`POST /api/memberships/<id>/resume/`):**
+   * Unfreezes a `FROZEN` membership back to `ACTIVE`.
+   * If resumed before the scheduled `frozen_to` date, unused freeze days are automatically subtracted back from `end_date`.
+5. **Upgrading (`POST /api/memberships/<id>/upgrade/?plan_id=...`):**
+   * Allows upgrading to a plan with a higher price and same duration (for auto-renew).
+   * Calculates a prorated upgrade fee (`UPGRADE_FEE`) based on the remaining value of the current plan using daily rates.
+6. **Canceling Auto-Renewal (`POST /api/memberships/<id>/cancel-renewal/`):**
+   * Communicates with Stripe to cancel the subscription at the end of the paid period and updates `auto_renew = False`.
+
+### API Endpoints (`/api/memberships/`)
+
+| Method | Endpoint | Description | Access |
+|---|---|---|---|
+| **GET** | `/api/memberships/memberships/` | List and filter memberships (`status`, `auto_renew`, `member_id`, `from`, `to`) | Users see own, `staff` sees all |
+| **POST** | `/api/memberships/memberships/` | Purchase a new membership and init Stripe payment | `IsAuthenticated` |
+| **GET** | `/api/memberships/memberships/<id>/` | Retrieve membership details, plan info, and payments | Owner or `staff` |
+| **POST** | `/api/memberships/memberships/<id>/freeze/` | Freeze active membership (`?to=YYYY-MM-DD`) | Owner or `staff` |
+| **POST** | `/api/memberships/memberships/<id>/resume/` | Resume a frozen membership back to `ACTIVE` | Owner or `staff` |
+| **POST** | `/api/memberships/memberships/<id>/upgrade/` | Create upgrade payment session (`?plan_id=...`) | Owner or `staff` |
+| **POST** | `/api/memberships/memberships/<id>/cancel-renewal/` | Disable auto-renewal at period end in Stripe | Owner or `staff` |
+
+### Database Constraints
+
+The `Membership` model uses robust database-level constraints to prevent invalid states:
+* `unique_active_or_frozen_membership_per_member`: Ensures a member cannot have overlapping active or frozen memberships.
+* `membership_end_date_gte_start_date`: Ensures `end_date` is never earlier than `start_date`.
+* `membership_frozen_range_valid`: Ensures `frozen_to` is greater than or equal to `frozen_from` when specified.
+
+### Where the code lives
+
+| File | Purpose |
+|---|---|
+| `membership_service/models.py` | `Membership` model, status choices, properties (`was_frozen`, `frozen_days`), and database constraints |
+| `membership_service/views.py` | `MembershipViewSet` handling purchase, freeze, resume, upgrade, list, and filters |
+| `membership_service/serializers.py` | Serializers for reading, creating, freezing, and upgrading memberships |
+| `membership_service/tests/` | Unit and integration tests covering the membership lifecycle and business rules |
