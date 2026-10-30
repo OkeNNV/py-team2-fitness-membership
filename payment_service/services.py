@@ -1,0 +1,651 @@
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, time, timedelta, timezone
+
+from django.db import transaction
+from django.utils import timezone as django_timezone
+from stripe import StripeClient
+
+from config import settings
+from membership_service.models import Membership
+from payment_service.models import Payment
+from plan_service.models import MembershipPlan
+from notification_service.services import notify_payment_success, notify_membership_expired
+
+
+class PaymentService:
+    """Handle Stripe operations and payment state changes."""
+
+    def __init__(self, stripe_client: StripeClient | None = None):
+        self.stripe_client = stripe_client
+        if self.stripe_client is None:
+            self.stripe_client = StripeClient(settings.STRIPE_SECRET_KEY)
+
+    @staticmethod
+    def _get_stripe_product_id(plan: MembershipPlan) -> str:
+        """Return the plan's Stripe product ID or raise an error."""
+        if not plan.stripe_product_id:
+            raise ValueError(
+                f"Membership plan {plan.id} is not synchronized with Stripe"
+            )
+
+        return plan.stripe_product_id
+
+    def archive_stripe_product(
+            self,
+            plan: MembershipPlan,
+    ) -> None:
+        """Archive a membership plan product and its prices in Stripe."""
+        product_id = self._get_stripe_product_id(plan)
+
+        prices = self.stripe_client.v1.prices.list(
+            {
+                "product": product_id,
+                "active": True,
+            }
+        )
+
+        for price in prices.auto_paging_iter():
+            self.stripe_client.v1.prices.update(
+                price.id,
+                {
+                    "active": False,
+                },
+            )
+
+        self.stripe_client.v1.products.update(
+            product_id,
+            {
+                "active": False,
+            },
+        )
+
+    def construct_webhook_event(
+        self,
+        payload: bytes,
+        signature: str,
+    ):
+        """Validate and construct a Stripe webhook event."""
+        return self.stripe_client.construct_event(
+            payload,
+            signature,
+            settings.STRIPE_WEBHOOK_SECRET,
+        )
+
+    def create_stripe_product(
+        self,
+        plan: MembershipPlan,
+    ) -> str:
+        """Create a Stripe Product and its prices for a membership plan.
+
+        Creates one one-time price and one recurring price associated with
+        the Stripe Product.
+
+        Args:
+            plan: Membership plan whose name, price, and duration are used
+                to configure the Stripe objects.
+
+        Returns:
+            The identifier of the created Stripe Product.
+
+        Raises:
+            stripe.StripeError: If Stripe fails to create the product or
+                either of its prices.
+        """
+        product = self.stripe_client.v1.products.create(
+            {
+                "name": plan.name,
+            }
+        )
+
+        product_id = product.id
+        self.stripe_client.v1.prices.create({
+            "currency": "usd",
+            "unit_amount": int(plan.price * 100),
+            "product": product_id,
+            "nickname": "one-time-price",
+        })
+        self.stripe_client.v1.prices.create({
+            "currency": "usd",
+            "unit_amount": int(plan.price * 100),
+            "recurring": {
+                "interval": "day",
+                "interval_count": plan.duration_days,
+            },
+            "product": product_id,
+            "nickname": "recurring-price",
+        })
+
+        return product_id
+
+    @transaction.atomic
+    def create_checkout_session(
+        self,
+        membership: Membership,
+    ) -> Payment:
+        """Create or reuse a Checkout Session for a membership purchase.
+
+        Creates a pending Payment associated with the given membership,
+        initializes Stripe Checkout Session, and stores the
+        resulting session ID and payment URL in the Payment.
+
+        Args:
+            membership: Membership for which the payment is being created.
+
+        Returns:
+            A new or reusable pending Payment with Stripe session details.
+
+        Raises:
+            stripe.StripeError: If a Stripe operation fails.
+            ValueError: If the membership is already paid or its Stripe price
+                configuration is invalid.
+        """
+        membership = Membership.objects.select_for_update().get(
+            pk=membership.pk
+        )
+
+        membership_payments = Payment.objects.filter(
+            membership=membership,
+            payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
+        )
+        if membership_payments.filter(status=Payment.Status.PAID).exists():
+            raise ValueError("Membership has already been paid")
+
+        pending_payment = (
+            membership_payments
+            .filter(status=Payment.Status.PENDING)
+            .order_by("-created_at")
+            .first()
+        )
+        if pending_payment:
+            existing_session = (
+                self.stripe_client.v1.checkout.sessions.retrieve(
+                    pending_payment.session_id
+                )
+            )
+            if existing_session.status in {"open", "complete"}:
+                return pending_payment
+            if existing_session.status == "expired":
+                pending_payment.status = Payment.Status.EXPIRED
+                pending_payment.save(update_fields=["status"])
+
+        stripe_product_id = self._get_stripe_product_id(membership.plan)
+        price_type = "recurring" if membership.auto_renew else "one_time"
+        checkout_mode = "subscription" if membership.auto_renew else "payment"
+
+        prices = self.stripe_client.v1.prices.list(
+            {
+                "product": stripe_product_id,
+                "active": True,
+                "type": price_type,
+            }
+        )
+
+        if not prices.data:
+            raise ValueError(
+                f"No active {price_type} price found "
+                f"for Stripe product {stripe_product_id}"
+            )
+
+        if len(prices.data) > 1:
+            raise ValueError(
+                f"Multiple active {price_type} prices found "
+                f"for Stripe product {stripe_product_id}"
+            )
+
+        price = prices.data[0]
+        expected_amount = int(
+            membership.price_at_purchase * Decimal("100")
+        )
+
+        if price.unit_amount != expected_amount:
+            raise ValueError(
+                "Membership price does not match Stripe price"
+            )
+
+        if price.currency != "usd":
+            raise ValueError(
+                "Stripe price currency must be USD"
+            )
+
+        price_id = price.id
+
+        session_data = {
+            "success_url": "http://localhost:8000/payments/success/",
+            "cancel_url": "http://localhost:8000/payments/cancel/",
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "mode": checkout_mode,
+            "metadata": {
+                "membership_id": str(membership.id),
+            },
+        }
+
+        if membership.auto_renew:
+            session_data["subscription_data"] = {
+                "metadata": {
+                    "membership_id": str(membership.id),
+                }
+            }
+
+        session = self.stripe_client.v1.checkout.sessions.create(session_data)
+
+        return Payment.objects.create(
+            membership=membership,
+            payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
+            money_to_pay=membership.price_at_purchase,
+            session_id=session.id,
+            session_url=session.url,
+        )
+
+    @transaction.atomic
+    def create_upgrade_checkout_session(
+        self,
+        membership: Membership,
+        new_plan: MembershipPlan,
+        upgrade_fee: Decimal,
+    ) -> Payment:
+        """Create or reuse a Stripe Checkout Session for an upgrade fee."""
+        membership = (
+            Membership.objects
+            .select_for_update()
+            .select_related("plan")
+            .get(pk=membership.pk)
+        )
+
+        if new_plan.price <= membership.plan.price:
+            raise ValueError(
+                "Upgrade is only allowed to a more expensive plan"
+            )
+
+        upgrade_fee = upgrade_fee.quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP,
+        )
+
+        if upgrade_fee <= 0:
+            raise ValueError(
+                "Upgrade fee must be greater than zero"
+            )
+
+        pending_payment = (
+            Payment.objects
+            .select_for_update()
+            .filter(
+                membership=membership,
+                payment_type=Payment.Type.UPGRADE_FEE,
+                status=Payment.Status.PENDING,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+        if pending_payment:
+            existing_session = (
+                self.stripe_client.v1.checkout.sessions.retrieve(
+                    pending_payment.session_id
+                )
+            )
+
+            existing_target_plan_id = (
+                existing_session.metadata.get("target_plan_id")
+            )
+
+            if existing_session.status in {"open", "complete"}:
+                if existing_target_plan_id != str(new_plan.id):
+                    raise ValueError(
+                        "Another upgrade payment is already pending"
+                    )
+
+                return pending_payment
+
+            if existing_session.status == "expired":
+                pending_payment.status = Payment.Status.EXPIRED
+                pending_payment.save(update_fields=["status"])
+
+        stripe_product_id = self._get_stripe_product_id(new_plan)
+
+        metadata = {
+            "membership_id": str(membership.id),
+            "target_plan_id": str(new_plan.id),
+            "payment_type": Payment.Type.UPGRADE_FEE,
+        }
+
+        session = self.stripe_client.v1.checkout.sessions.create(
+            {
+                "success_url": "http://localhost:8000/payments/success/",
+                "cancel_url": "http://localhost:8000/payments/cancel/",
+                "mode": "payment",
+                "line_items": [
+                    {
+                        "price_data": {
+                            "currency": "usd",
+                            "product": stripe_product_id,
+                            "unit_amount": int(upgrade_fee * 100),
+                        },
+                        "quantity": 1,
+                    }
+                ],
+                "metadata": metadata,
+            }
+        )
+
+        return Payment.objects.create(
+            membership=membership,
+            target_plan=new_plan,
+            payment_type=Payment.Type.UPGRADE_FEE,
+            money_to_pay=upgrade_fee,
+            session_id=session.id,
+            session_url=session.url,
+        )
+
+    @transaction.atomic
+    def mark_payment_as_paid_and_membership_as_active(
+            self,
+            session_id: str,
+            subscription_id: str | None = None,
+    ) -> Payment:
+        """Mark a payment as paid and apply its membership changes."""
+        payment = (
+            Payment.objects
+            .select_for_update()
+            .get(session_id=session_id)
+        )
+
+        if payment.status == Payment.Status.PAID:
+            return payment
+
+        if payment.status != Payment.Status.PENDING:
+            raise ValueError(
+                f"Payment cannot be completed from status {payment.status}"
+            )
+
+        membership = Membership.objects.select_for_update().get(
+            pk=payment.membership_id,
+        )
+
+        if payment.payment_type == Payment.Type.MEMBERSHIP_PURCHASE:
+            membership.start_date = django_timezone.localdate()
+            membership.end_date = (
+                membership.start_date
+                + timedelta(days=membership.plan.duration_days)
+            )
+            membership.status = Membership.Status.ACTIVE
+            update_fields = ["start_date", "end_date", "status"]
+
+            if membership.auto_renew:
+                if not subscription_id:
+                    raise ValueError(
+                        "Subscription checkout does not contain "
+                        "a Stripe subscription ID"
+                    )
+
+                membership.stripe_subscription_id = subscription_id
+                update_fields.append("stripe_subscription_id")
+
+            membership.save(update_fields=update_fields)
+
+        elif payment.payment_type == Payment.Type.UPGRADE_FEE:
+
+            if payment.target_plan is None:
+                raise ValueError(
+                    "Upgrade payment does not have a target plan"
+                )
+
+            self.update_subscription_plan(
+                membership=membership,
+                new_plan=payment.target_plan,
+            )
+
+            membership.plan = payment.target_plan
+            membership.save(update_fields=["plan"])
+
+        else:
+            raise ValueError(
+                f"Unsupported payment type: {payment.payment_type}"
+            )
+
+        payment.status = Payment.Status.PAID
+        payment.save(update_fields=["status"])
+
+        notify_payment_success(payment)
+
+        return payment
+
+    @transaction.atomic
+    def mark_payment_as_expired(self, session_id: str) -> Payment:
+        """Mark a pending payment as expired using its Stripe session ID."""
+        payment = (
+            Payment.objects
+            .select_for_update()
+            .select_related("membership")
+            .get(session_id=session_id)
+        )
+
+        if payment.status in {
+            Payment.Status.EXPIRED,
+            Payment.Status.PAID,
+        }:
+            return payment
+
+        payment.status = Payment.Status.EXPIRED
+        payment.save(update_fields=["status"])
+
+        if payment.payment_type == Payment.Type.MEMBERSHIP_PURCHASE:
+            membership = (
+                Membership.objects
+                .select_for_update()
+                .get(pk=payment.membership_id)
+            )
+
+            has_another_active_payment = Payment.objects.filter(
+                membership=membership,
+                payment_type=Payment.Type.MEMBERSHIP_PURCHASE,
+                status__in=[
+                    Payment.Status.PENDING,
+                    Payment.Status.PAID,
+                ],
+            ).exclude(pk=payment.pk).exists()
+
+            if (
+                    membership.status == Membership.Status.FROZEN
+                    and not has_another_active_payment
+            ):
+                membership.status = Membership.Status.EXPIRED
+                membership.save(update_fields=["status"])
+
+        return payment
+
+    def mark_membership_as_expired_after_failed_renewal(
+            self,
+            subscription_id: str,
+    ) -> Membership:
+        """Cancel the Stripe subscription after a failed renewal payment.
+
+        Marks the related membership as expired, disables automatic renewal,
+        and queues an expiration notification. If the membership is already
+        expired with auto-renew disabled, returns it without making another
+        Stripe request.
+
+        Args:
+            subscription_id: Stripe identifier of the subscription whose
+                renewal payment failed.
+
+        Returns:
+            The updated membership instance.
+
+        Raises:
+            Membership.DoesNotExist: If no membership is associated with the
+                provided subscription ID.
+            stripe.StripeError: If the Stripe subscription cannot be canceled.
+        """
+        membership = Membership.objects.get(
+            stripe_subscription_id=subscription_id
+        )
+
+        if (
+                membership.status == Membership.Status.EXPIRED
+                and not membership.auto_renew
+        ):
+            return membership
+
+        self.stripe_client.v1.subscriptions.cancel(subscription_id)
+
+        with transaction.atomic():
+            membership = (
+                Membership.objects
+                .select_for_update()
+                .get(pk=membership.pk)
+            )
+
+            if (
+                    membership.status == Membership.Status.EXPIRED
+                    and not membership.auto_renew
+            ):
+                return membership
+
+            membership.status = Membership.Status.EXPIRED
+            membership.auto_renew = False
+            membership.save(update_fields=["status", "auto_renew"])
+
+            notify_membership_expired(membership)
+
+        return membership
+
+    @transaction.atomic
+    def renew_membership(
+            self,
+            subscription_id: str,
+            period_end: int,
+    ) -> Membership:
+        """Renew a membership after a successful recurring payment."""
+        membership = (
+            Membership.objects
+            .select_for_update()
+            .get(stripe_subscription_id=subscription_id)
+        )
+
+        membership.end_date = datetime.fromtimestamp(
+            period_end,
+            tz=timezone.utc,
+        ).date()
+
+        update_fields = ["end_date"]
+
+        if membership.status != Membership.Status.FROZEN:
+            membership.status = Membership.Status.ACTIVE
+            update_fields.append("status")
+
+        membership.save(update_fields=update_fields)
+
+        return membership
+
+    def update_subscription_trial_end(
+            self,
+            membership: Membership,
+            new_billing_date,
+    ) -> None:
+        """Move the next Stripe billing date to the membership end date."""
+        if not membership.auto_renew:
+            return
+
+        if not membership.stripe_subscription_id:
+            raise ValueError(
+                "Auto-renew membership does not have a Stripe subscription ID"
+            )
+
+        billing_datetime = datetime.combine(
+            new_billing_date,
+            time(hour=12),
+            tzinfo=timezone.utc,
+        )
+
+        self.stripe_client.v1.subscriptions.update(
+            membership.stripe_subscription_id,
+            {
+                "trial_end": int(billing_datetime.timestamp()),
+                "proration_behavior": "none",
+            },
+        )
+
+    def cancel_subscription_at_period_end(
+            self,
+            membership: Membership,
+    ) -> None:
+        """Disable subscription renewal after the paid period ends."""
+        if not membership.auto_renew:
+            return
+
+        if not membership.stripe_subscription_id:
+            raise ValueError(
+                "Auto-renew membership does not have a Stripe subscription ID"
+            )
+
+        self.stripe_client.v1.subscriptions.update(
+            membership.stripe_subscription_id,
+            {
+                "cancel_at_period_end": True,
+            },
+        )
+
+    def update_subscription_plan(
+            self,
+            membership: Membership,
+            new_plan: MembershipPlan,
+    ) -> None:
+        """Set a new recurring price for future subscription cycles."""
+        if not membership.auto_renew:
+            return
+
+        if not membership.stripe_subscription_id:
+            raise ValueError(
+                "Auto-renew membership does not have a Stripe subscription ID"
+            )
+
+        product_id = self._get_stripe_product_id(new_plan)
+
+        prices = self.stripe_client.v1.prices.list(
+            {
+                "product": product_id,
+                "active": True,
+                "type": "recurring",
+            }
+        )
+
+        if not prices.data:
+            raise ValueError(
+                f"No active recurring price found "
+                f"for Stripe product {product_id}"
+            )
+
+        if len(prices.data) > 1:
+            raise ValueError(
+                f"Multiple active recurring prices found "
+                f"for Stripe product {product_id}"
+            )
+
+        new_price = prices.data[0]
+
+        subscription = (
+            self.stripe_client.v1.subscriptions.retrieve(
+                membership.stripe_subscription_id
+            )
+        )
+
+        if len(subscription.items.data) != 1:
+            raise ValueError(
+                "Stripe subscription must contain exactly one item"
+            )
+
+        subscription_item = subscription.items.data[0]
+
+        self.stripe_client.v1.subscriptions.update(
+            membership.stripe_subscription_id,
+            {
+                "items": [
+                    {
+                        "id": subscription_item.id,
+                        "price": new_price.id,
+                    }
+                ],
+                "proration_behavior": "none",
+            },
+        )
