@@ -339,6 +339,360 @@ The `Membership` model uses robust database-level constraints to prevent invalid
 * `unique_active_or_frozen_membership_per_member`: Ensures a member cannot have overlapping active or frozen memberships.
 * `membership_end_date_gte_start_date`: Ensures `end_date` is never earlier than `start_date`.
 * `membership_frozen_range_valid`: Ensures `frozen_to` is greater than or equal to `frozen_from` when specified.
+## Stripe payments
+
+Stripe handles initial membership purchases, paid plan upgrades and automatic renewals.
+The application creates Checkout Sessions, stores their state in the `Payment` model and
+changes memberships only after receiving a verified Stripe webhook.
+
+The client must not mark a payment as paid directly. Stripe webhooks are the source of truth
+for successful, expired and recurring payments.
+
+### How it works
+
+```text
+Client creates a membership or requests an upgrade
+        │
+        ▼
+PaymentService creates a Stripe Checkout Session
+        │
+        ├── Payment(status=PENDING)
+        └── session_url is returned to the client
+                    │
+                    ▼
+             User pays in Stripe
+                    │
+                    ▼
+POST /api/payments/webhook/
+        │  verifies the Stripe-Signature header
+        ▼
+PaymentService updates Payment and Membership
+        │
+        ├── initial purchase → membership becomes ACTIVE
+        ├── upgrade fee     → the new plan is applied
+        ├── renewal paid    → end_date is extended
+        └── renewal failed  → membership becomes EXPIRED
+```
+
+The API returns the Stripe-hosted `session_url`. The frontend should redirect the user to
+that URL and wait for the webhook to update the payment and membership state.
+
+### Setup
+
+Add the Stripe credentials to `.env`:
+
+| Variable | Description |
+|---|---|
+| `STRIPE_SECRET_KEY` | Stripe secret API key. Use a test-mode key during development. |
+| `STRIPE_WEBHOOK_SECRET` | Signing secret used to verify incoming Stripe webhooks. |
+
+Never commit either value or expose the secret key to the frontend.
+
+For local development, forward Stripe events to Django with the Stripe CLI:
+
+```bash
+stripe login
+stripe listen --forward-to localhost:8000/api/payments/webhook/
+```
+
+Copy the `whsec_...` value printed by `stripe listen` into `STRIPE_WEBHOOK_SECRET`, then
+restart Django.
+
+The webhook endpoint is:
+
+```text
+POST /api/payments/webhook/
+```
+
+It is CSRF-exempt because requests come from Stripe, but every request must contain a valid
+`Stripe-Signature`. A missing or invalid signature returns `400`. If the webhook secret is
+not configured, the endpoint returns `500`.
+
+### Stripe products and prices
+
+Creating a membership plan also creates the following Stripe objects:
+
+- one Stripe Product;
+- one one-time USD price for ordinary purchases;
+- one recurring USD price whose interval matches `duration_days`.
+
+The Stripe Product ID is saved in `MembershipPlan.stripe_product_id`.
+
+Billing fields cannot be changed after a plan has been synchronized with Stripe. Create a
+new plan instead. When an unused plan is deleted, its active Stripe prices and product are
+archived before the local plan is removed.
+
+A plan cannot be deleted while it is referenced by a membership or an upgrade payment.
+
+### Payment types and statuses
+
+| Field | Value | Meaning |
+|---|---|---|
+| Type | `MEMBERSHIP_PURCHASE` | Initial payment for a membership |
+| Type | `UPGRADE_FEE` | Prorated payment for moving to a more expensive plan |
+| Status | `PENDING` | Checkout Session was created and is waiting for Stripe |
+| Status | `PAID` | Stripe confirmed the payment |
+| Status | `EXPIRED` | Checkout Session expired before payment |
+
+Each payment stores:
+
+- its membership and, for upgrades, the target plan;
+- the amount in USD;
+- the Stripe Checkout Session ID;
+- the Stripe-hosted Checkout URL;
+- its creation time.
+
+Payment fields exposed by the API are read-only. Payments are created and updated only by
+the payment workflow.
+
+### Purchasing a membership
+
+Authenticated users create a membership through:
+
+```text
+POST /api/memberships/memberships/
+```
+
+Example request:
+
+```json
+{
+  "plan_id": 3,
+  "auto_renew": true
+}
+```
+
+The response contains both the membership and its payment:
+
+```json
+{
+  "membership": {
+    "id": 12,
+    "plan": 3,
+    "status": "FROZEN",
+    "auto_renew": true,
+    "price_at_purchase": "49.99"
+  },
+  "payment": {
+    "id": 31,
+    "status": "PENDING",
+    "money_to_pay": "49.99",
+    "payment_type": "MEMBERSHIP_PURCHASE",
+    "target_plan": null,
+    "session_url": "https://checkout.stripe.com/..."
+  }
+}
+```
+
+The membership is initially `FROZEN` and becomes `ACTIVE` only after Stripe sends a paid
+`checkout.session.completed` event.
+
+For an ordinary membership, Checkout uses one-time payment mode. When `auto_renew=true`,
+Checkout uses subscription mode and the resulting Stripe subscription ID is stored on the
+membership.
+
+Before Checkout is created, the service verifies that:
+
+- the plan is synchronized with Stripe;
+- exactly one suitable active Stripe price exists;
+- the Stripe amount matches `price_at_purchase`;
+- the Stripe currency is USD;
+- the membership has not already been paid.
+
+If an open or completed pending Checkout Session already exists, it is reused. This prevents
+repeated API requests from creating several active sessions for the same purchase.
+
+### Successful and expired Checkout Sessions
+
+The initial payment is completed by the webhook, not by the success redirect.
+
+For a successful membership purchase:
+
+1. the membership period starts on the current local date;
+2. `end_date` is calculated from the plan duration;
+3. the membership becomes `ACTIVE`;
+4. the Stripe subscription ID is saved when auto-renew is enabled;
+5. the payment becomes `PAID`;
+6. a payment notification is queued.
+
+For a successful upgrade:
+
+1. the Stripe subscription price is changed for future billing cycles when auto-renew is enabled;
+2. the membership is assigned to the target plan;
+3. the upgrade payment becomes `PAID`;
+4. a payment notification is queued.
+
+When `checkout.session.expired` is received, a pending payment becomes `EXPIRED`.
+An unpaid initial membership also becomes `EXPIRED` when no other pending or paid purchase
+payment exists for it.
+
+Repeated completion and expiration webhooks are safe: an already paid or expired payment is
+returned without applying the same state change twice.
+
+### Automatic renewal
+
+Auto-renew memberships use a Stripe subscription.
+
+| Stripe event | Condition | Application behaviour |
+|---|---|---|
+| `invoice.paid` | `billing_reason=subscription_cycle` | Set `end_date` from the Stripe billing period and keep the membership `ACTIVE` |
+| `invoice.payment_failed` | `billing_reason=subscription_cycle` | Cancel the Stripe subscription, set the membership to `EXPIRED` and disable auto-renew |
+| Other invoice events | — | Acknowledge without changing the membership |
+
+A frozen membership remains `FROZEN` after a successful renewal, but its `end_date` is still
+updated from the Stripe invoice.
+
+Freezing an auto-renew membership moves the Stripe billing date to the extended membership
+end date without proration. Resuming it early moves the billing date back when unused freeze
+days are removed.
+
+Automatic renewal can be disabled through:
+
+```text
+POST /api/memberships/memberships/{membership_id}/cancel-renewal/
+```
+
+Stripe is configured with `cancel_at_period_end=true`, so access continues until the end of
+the already paid period. Calling the endpoint again is safe and returns a successful response.
+
+### Plan upgrades
+
+An upgrade Checkout Session is created through:
+
+```text
+POST /api/memberships/memberships/{membership_id}/upgrade/?plan_id={new_plan_id}
+```
+
+An upgrade is allowed only when:
+
+- the membership is `ACTIVE` or `FROZEN`;
+- its initial purchase payment is already `PAID`;
+- the target plan is more expensive than the current plan;
+- a payable part of the membership period remains;
+- auto-renew memberships keep the same plan duration.
+
+The upgrade fee is prorated by the remaining days:
+
+```text
+current daily rate = current plan price / current plan duration
+new daily rate     = new plan price / new plan duration
+
+upgrade fee =
+    (new daily rate - current daily rate) × remaining membership days
+```
+
+The result is rounded to two decimal places and charged as a one-time USD payment.
+
+The plan does not change when the upgrade session is created. It changes only after the
+corresponding `checkout.session.completed` webhook confirms payment.
+
+If an open upgrade session already exists for the same target plan, it is reused. A request
+for a different target plan is rejected until the existing session is paid or expires.
+
+For auto-renew memberships, a successful upgrade also changes the subscription item to the
+new recurring price with `proration_behavior="none"`. The one-time upgrade fee covers the
+current period; the new recurring price applies to future cycles.
+
+### Webhook events
+
+| Event | When it is processed | Result |
+|---|---|---|
+| `checkout.session.completed` | `payment_status=paid` | Complete the initial purchase or upgrade |
+| `checkout.session.expired` | always | Mark the related pending payment as expired |
+| `invoice.paid` | recurring subscription cycle | Renew the membership |
+| `invoice.payment_failed` | recurring subscription cycle | Expire the membership and cancel its subscription |
+| Any other event | — | Return `200` without changes |
+
+Stripe may deliver the same event more than once. Payment transitions are protected with
+database transactions and row locks, and already processed payments are not applied again.
+
+Returning a non-2xx response tells Stripe to retry the webhook. For example, malformed
+recurring invoices without a subscription ID or line items return `500`.
+
+### What happens when something goes wrong
+
+| Situation | Behaviour |
+|---|---|
+| Missing `Stripe-Signature` | The webhook returns `400`. |
+| Invalid payload or signature | The webhook returns `400` and logs a warning. |
+| `STRIPE_WEBHOOK_SECRET` is missing | The webhook returns `500`. |
+| The plan has no Stripe Product ID | Checkout creation is rejected. |
+| No active matching Stripe price exists | Checkout creation is rejected. |
+| Several matching active prices exist | Checkout creation is rejected to avoid selecting an arbitrary price. |
+| Stripe amount differs from the local membership price | Checkout creation is rejected. |
+| Stripe currency is not USD | Checkout creation is rejected. |
+| A membership was already paid | A second initial Checkout Session is not created. |
+| A repeated paid webhook arrives | The already paid payment is returned without repeating the update. |
+| A recurring payment fails | The Stripe subscription is cancelled and the membership expires. |
+| Stripe cannot update a subscription during freeze or cancellation | The local membership change is not applied and the API returns an error. |
+
+### Current development URLs
+
+Checkout Sessions currently use these redirect URLs:
+
+```text
+http://localhost:8000/payments/success/
+http://localhost:8000/payments/cancel/
+```
+
+They are redirect destinations only and do not confirm a payment. The corresponding Django
+routes are not currently defined, so they should be replaced with real frontend URLs before
+deployment.
+
+The frontend must treat the redirect as informational and fetch the membership again until
+the webhook has changed the payment state.
+
+### Checking it manually
+
+Start Django and the Stripe webhook forwarder:
+
+```bash
+python manage.py runserver
+stripe listen --forward-to localhost:8000/api/payments/webhook/
+```
+
+Trigger test events with the Stripe CLI:
+
+```bash
+stripe trigger checkout.session.completed
+stripe trigger checkout.session.expired
+stripe trigger invoice.paid
+stripe trigger invoice.payment_failed
+```
+
+Generic CLI fixtures might not contain IDs that exist in the local database. For a complete
+end-to-end check, create a membership through the API, open its returned `session_url` and
+pay with a Stripe test card:
+
+```text
+4242 4242 4242 4242
+```
+
+Use any future expiration date, any three-digit CVC and any postal code.
+
+Then verify that:
+
+- the webhook request returned `200`;
+- the payment changed from `PENDING` to `PAID`;
+- the membership changed from `FROZEN` to `ACTIVE`;
+- `stripe_subscription_id` was saved when auto-renew was enabled.
+
+### Tests
+
+The payment test module currently contains only the default placeholder. Payment behaviour
+should be covered with mocked Stripe clients; automated tests must never call the real Stripe
+API.
+
+The main scenarios to cover are:
+
+- one-time and subscription Checkout creation;
+- reuse and expiration of pending sessions;
+- successful initial payments and upgrades;
+- repeated webhook delivery;
+- successful and failed recurring payments;
+- upgrade fee calculation;
+- cancellation and subscription price changes;
+- invalid webhook signatures.
 
 ### Where the code lives
 
@@ -348,3 +702,11 @@ The `Membership` model uses robust database-level constraints to prevent invalid
 | `membership_service/views.py` | `MembershipViewSet` handling purchase, freeze, resume, upgrade, list, and filters |
 | `membership_service/serializers.py` | Serializers for reading, creating, freezing, and upgrading memberships |
 | `membership_service/tests/` | Unit and integration tests covering the membership lifecycle and business rules |
+| `payment_service/models.py` | Payment types, statuses and stored Stripe session data |
+| `payment_service/services.py` | Checkout, product, payment, upgrade and subscription logic |
+| `payment_service/views.py` | Stripe webhook validation and event routing |
+| `payment_service/serializers.py` | Read-only payment API representation |
+| `payment_service/urls.py` | Webhook URL |
+| `membership_service/views.py` | Purchase, upgrade, freeze and cancel-renewal endpoints |
+| `plan_service/views.py` | Stripe Product creation and archival |
+| `plan_service/serializers.py` | Protection of Stripe-synchronized billing fields |
